@@ -2,25 +2,20 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 import traceback
 
 st.set_page_config(layout="wide", page_title="アメックス爆速仕分け")
 st.title("💳 アメックス明細 爆速仕分けツール")
 
-# --- 1. Google スプレッドシートに接続（クラウド＆PC両対応版） ---
+# --- 1. Google スプレッドシートに接続（最新のgspread単体方式） ---
 @st.cache_resource
 def init_gspread():
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    
     # クラウドの金庫（st.secrets）に鍵があればそれを使い、なければPCのkey.jsonを使う
     if "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        return gspread.service_account_from_dict(creds_dict)
     else:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(r'C:\Users\tsu81\OneDrive\Desktop\クレカ精算\key.json', scope)
-        
-    return gspread.authorize(creds)
+        return gspread.service_account(filename=r'C:\Users\tsu81\OneDrive\Desktop\クレカ精算\key.json')
 
 try:
     client = init_gspread()

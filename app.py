@@ -4,135 +4,57 @@ import plotly.express as px
 import gspread
 import traceback
 
-# --- 0. ページ設定＆高級感のあるカスタムデザイン（黒背景×金文字＋カードUI） ---
+# --- 0. ページ設定＆デザイン（タイトルだけ黒×金、他はスッキリ標準） ---
 st.set_page_config(layout="wide", page_title="THE SETTLEMENT | AMEX", page_icon="💳")
 
 st.markdown("""
 <style>
-/* 高級感のある黒×金ヘッダーバナー */
+/* タイトルバナーだけ高級感のある黒×金 */
 .luxury-banner {
     background: linear-gradient(135deg, #0a0a0a 0%, #1c1c1c 50%, #050505 100%);
     border: 1px solid #d4af37;
-    border-radius: 10px;
-    padding: 18px 15px;
+    border-radius: 8px;
+    padding: 14px 10px;
     text-align: center;
-    margin-bottom: 16px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    margin-bottom: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .luxury-title {
     color: #d4af37;
     font-family: 'Georgia', 'Times New Roman', serif;
-    font-size: 22px;
+    font-size: 20px;
     font-weight: bold;
-    letter-spacing: 3px;
+    letter-spacing: 2px;
     margin: 0;
 }
 .luxury-subtitle {
     color: #b89f5d;
-    font-size: 10px;
-    letter-spacing: 2px;
-    margin-top: 4px;
-}
-/* ティンダー風スワイプカードのデザイン */
-.tinder-card {
-    background: linear-gradient(145deg, #161616, #0d0d0d);
-    border: 2px solid #d4af37;
-    border-radius: 16px;
-    padding: 24px 18px;
-    text-align: center;
-    margin: 8px 0 16px 0;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-}
-.card-badge {
-    display: inline-block;
-    background-color: #d4af37;
-    color: #000000;
-    font-weight: bold;
-    border-radius: 6px;
-    padding: 4px 12px;
-    font-size: 12px;
-    margin-bottom: 10px;
-}
-.card-date {
-    color: #c0b283;
-    font-size: 13px;
+    font-size: 9px;
     letter-spacing: 1px;
-    margin-bottom: 8px;
+    margin-top: 3px;
 }
-.card-store {
-    color: #ffffff;
-    font-size: 20px;
-    font-weight: bold;
-    margin: 12px 0;
-    line-height: 1.4;
-    word-break: break-word;
-}
-.card-amount {
-    color: #f7ef8a;
-    font-size: 36px;
-    font-weight: 800;
-    font-family: 'Arial', sans-serif;
-    margin: 12px 0 8px 0;
-    text-shadow: 0px 2px 8px rgba(212, 175, 55, 0.3);
-}
-.card-member {
-    display: inline-block;
-    background-color: #262626;
-    color: #d4af37;
-    border: 1px solid #554411;
-    border-radius: 20px;
-    padding: 4px 14px;
-    font-size: 12px;
-    margin-top: 6px;
-}
-/* プライマリボタン（共有・ハヤト・マナ等）を赤から黒×金に変更 */
-button[kind="primary"] {
-    background: linear-gradient(135deg, #1f1f1f 0%, #0d0d0d 100%) !important;
-    color: #f7ef8a !important;
-    border: 1px solid #d4af37 !important;
-    font-weight: bold !important;
-    padding: 10px 0 !important;
-    box-shadow: 0 3px 8px rgba(0,0,0,0.3) !important;
-}
-button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #d4af37 0%, #aa8520 100%) !important;
-    color: #000000 !important;
-}
-/* 集計カードの装飾 */
-div[data-testid="stMetric"] {
-    background-color: #141414;
-    border-left: 3px solid #d4af37;
-    padding: 12px 15px;
-    border-radius: 6px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-}
-div[data-testid="stMetricLabel"] p {
-    color: #c0b283 !important;
-    font-weight: bold;
-}
-div[data-testid="stMetricValue"] div {
-    color: #f7ef8a !important;
+/* 操作ボタンが画面外に行かないよう、最上部に固定するコンテナのスタイル */
+.sticky-actions {
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    background-color: var(--background-color);
+    padding: 8px 0;
+    border-bottom: 1px solid #e0e0e0;
+    margin-bottom: 10px;
 }
 </style>
 <div class="luxury-banner">
-<div class="luxury-title">THE SETTLEMENT</div>
-<div class="luxury-subtitle">AMEX PRIVATE LEDGER & ANALYTICS</div>
+    <div class="luxury-title">THE SETTLEMENT</div>
+    <div class="luxury-subtitle">AMEX PRIVATE LEDGER & ANALYTICS</div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 1. セッション状態（一時保存メモリ）の初期化 ---
+# --- 1. セッション状態の初期化 ---
 if "pending_changes" not in st.session_state:
     st.session_state.pending_changes = {}
-if "skipped_indices" not in st.session_state:
-    st.session_state.skipped_indices = set()
-if "history_stack" not in st.session_state:
-    st.session_state.history_stack = []
-if "card_mode" not in st.session_state:
-    st.session_state.card_mode = "unclassified"
-if "reviewed_indices" not in st.session_state:
-    st.session_state.reviewed_indices = set()
 
-# --- 2. Google スプレッドシート接続（クラウド＆ローカル完全両対応） ---
+# --- 2. Google スプレッドシート接続 ---
 @st.cache_resource
 def init_gspread():
     try:
@@ -151,7 +73,7 @@ except Exception as e:
     st.code(traceback.format_exc(), language="python")
     st.stop()
 
-# --- 3. 毎月5日締め「請求月」の自動計算ロジック ---
+# --- 3. ユーティリティ関数 ---
 def calc_billing_month(date_str):
     try:
         dt = pd.to_datetime(str(date_str), errors='coerce')
@@ -167,6 +89,14 @@ def calc_billing_month(date_str):
     except:
         return "日付不明"
 
+def clean_merchant_name(raw_name):
+    """アメックスの長すぎる住所やカタカナをスッキリさせる簡易クレンジング"""
+    name = str(raw_name)
+    # よくある不要な文字列を削る
+    for word in [" ｶﾌﾞｼｷｶﾞｲｼ", " ﾄｳｷｮｳ", " ｼﾌﾞﾔ", " ｼﾝｼﾞｭｸ", "ｼﾞｬﾊﾟﾝ", "ｺｳｷﾞｮｳ"]:
+        name = name.replace(word, "")
+    return name.strip()
+
 def clean_and_format_csv(uploaded_file):
     try:
         new_df = pd.read_csv(uploaded_file, encoding="shift-jis")
@@ -180,7 +110,11 @@ def clean_and_format_csv(uploaded_file):
         new_df.insert(0, "仕分け", "未分類")
         new_df.loc[new_df["金額"] < 0, "仕分け"] = "集計外"
         
-    keep_columns = ["仕分け", "金額", "ご利用内容", "ご利用日", "カード会員様名"]
+    # クレンジング用の列を準備
+    if "ご利用内容" in new_df.columns:
+        new_df["表示名"] = new_df["ご利用内容"].apply(clean_merchant_name)
+    
+    keep_columns = ["仕分け", "金額", "表示名", "ご利用内容", "ご利用日", "カード会員様名"]
     keep_columns = [col for col in keep_columns if col in new_df.columns]
     new_df = new_df[keep_columns]
     return new_df
@@ -228,7 +162,11 @@ if not existing_data:
 else:
     df = pd.DataFrame(existing_data)
     
-    preferred_order = ["仕分け", "金額", "ご利用内容", "ご利用日", "カード会員様名"]
+    # 古いデータ構造への配慮（表示名列がなければ作る）
+    if "表示名" not in df.columns and "ご利用内容" in df.columns:
+        df.insert(2, "表示名", df["ご利用内容"].apply(clean_merchant_name))
+
+    preferred_order = ["仕分け", "金額", "表示名", "ご利用内容", "ご利用日", "カード会員様名"]
     cols = [c for c in preferred_order if c in df.columns] + [c for c in df.columns if c not in preferred_order]
     df = df[cols]
     
@@ -244,236 +182,72 @@ else:
         billing_months.append("日付不明")
     billing_options = billing_months + ["すべて表示"]
 
-    top_c1, top_c2 = st.columns([7, 3])
+    # 画面上部：請求月の選択 ＆ 保存ボタン（常に一番上に固定表示）
+    st.markdown('<div class="sticky-actions">', unsafe_allow_html=True)
+    top_c1, top_c2, top_c3 = st.columns([4, 3, 3])
     with top_c1:
-        selected_month = st.selectbox("📅 対象の請求月（毎月5日締め基準）", options=billing_options, index=0)
+        selected_month = st.selectbox("📅 対象の請求月（毎月5日締め）", options=billing_options, index=0, label_visibility="collapsed")
     with top_c2:
-        st.write("")
-        if st.button("🔄 相手の最新状況を反映", use_container_width=True):
-            st.rerun()
-
-    pending_count = len(st.session_state.pending_changes)
-    if pending_count > 0:
-        st.warning(f"⚡ 現在 **{pending_count}件** の仕分けが一時保存されています。作業が終わったら下のボタンでクラウドへ反映してください。")
-        if st.button(f"☁️ {pending_count}件の変更をクラウドにまとめて保存する", type="primary", use_container_width=True):
-            with st.spinner("クラウドの最新データと合体して保存中..."):
+        if st.button("☁️ 変更をクラウドに保存", type="primary", use_container_width=True):
+            with st.spinner("保存中..."):
                 save_changes_to_cloud(st.session_state.pending_changes, cols)
                 st.session_state.pending_changes.clear()
-                st.session_state.history_stack.clear()
-            st.success("✅ クラウドへの保存が完了しました！相手の画面にも反映されます。")
+            st.success("✅ 保存しました！")
             st.rerun()
+    with top_c3:
+        if st.button("🔄 最新状況に更新", use_container_width=True):
+            st.session_state.pending_changes.clear()
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # --- 5. メイン画面：3つのタブ ---
-    tab1, tab2, tab3 = st.tabs(["⚡ カード仕分け", "📊 月別精算", "📈 推移・CSV追加"])
+    tab1, tab2, tab3 = st.tabs(["📋 一覧仕分け", "📊 月別精算", "📈 推移・CSV追加"])
 
-    # ================= タブ1：カード仕分け ＆ 最終確認 ＆ 一覧表 =================
+    # ================= タブ1：一覧表サクサク選択式 =================
     with tab1:
         if selected_month != "すべて表示":
             month_df = df[df["請求月"] == selected_month].copy()
         else:
             month_df = df.copy()
 
-        pure_unclassified_df = month_df[
-            (month_df["仕分け"] == "未分類") & 
-            (~month_df.index.isin(st.session_state.skipped_indices))
-        ]
-        skipped_df = month_df[
-            (month_df["仕分け"] == "未分類") & 
-            (month_df.index.isin(st.session_state.skipped_indices))
-        ]
-        done_review_df = month_df[
-            (month_df["仕分け"] != "未分類") & 
-            (~month_df.index.isin(st.session_state.reviewed_indices))
-        ]
+        c_filter, c_unclass = st.columns([6, 4])
+        with c_filter:
+            only_unclassified = st.toggle("🔍「未分類」のみ表示", value=True)
+        with c_unclass:
+            unclass_count = len(month_df[month_df["仕分け"] == "未分類"])
+            st.caption(f"⚠️ 未分類の残り: {unclass_count} 件")
 
-        total_month_count = len(month_df)
-        done_month_count = len(month_df[month_df["仕分け"] != "未分類"])
+        table_df = month_df[month_df["仕分け"] == "未分類"].copy() if only_unclassified else month_df.copy()
+        display_df = table_df[cols].copy()
+
+        st.caption("💡 表の「仕分け」列からプルダウンで変更できます。変更後は一番上の「☁️ 変更をクラウドに保存」を押してください。")
         
-        if total_month_count > 0:
-            progress_ratio = done_month_count / total_month_count
-            st.progress(progress_ratio, text=f"仕分け進捗: {done_month_count} / {total_month_count} 件完了 ({int(progress_ratio*100)}%) ※すでに仕分け済みの項目は自動でスキップされます")
+        edited_df = st.data_editor(
+            display_df,
+            column_config={
+                "仕分け": st.column_config.SelectboxColumn(
+                    "仕分け",
+                    options=["未分類", "共有", "ハヤト", "マナ", "不明(保留)", "集計外", "🔄 未分類に戻す"],
+                    required=True,
+                    width="small"
+                ),
+                "金額": st.column_config.NumberColumn("金額", format="¥%d", disabled=True, width="small"),
+                "表示名": st.column_config.TextColumn("お店・内容（スッキリ）", disabled=True, width="medium"),
+                "ご利用内容": st.column_config.TextColumn("正規データ（元表記）", disabled=True, width="medium"),
+                "ご利用日": st.column_config.TextColumn("利用日", disabled=True, width="small"),
+                "カード会員様名": st.column_config.TextColumn("会員", disabled=True, width="small")
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=500
+        )
 
-        active_deck = pd.DataFrame()
-        mode_title = ""
-
-        if st.session_state.card_mode == "unclassified":
-            if not pure_unclassified_df.empty:
-                active_deck = pure_unclassified_df
-                mode_title = f"🆕 未分類のカード（残り {len(active_deck)} 件）"
-            else:
-                active_deck = pd.DataFrame()
-        elif st.session_state.card_mode == "skipped":
-            if not skipped_df.empty:
-                active_deck = skipped_df
-                mode_title = f"⏭️ パスしたカードの確認（残り {len(active_deck)} 件）"
-            else:
-                st.session_state.card_mode = "unclassified"
-                st.rerun()
-        elif st.session_state.card_mode == "review_done":
-            if not done_review_df.empty:
-                active_deck = done_review_df
-                mode_title = f"👀 仕分け済み項目の最終チェック（残り {len(active_deck)} 件）"
-            else:
-                st.success("✨ すべての仕分け済みカードの最終チェックが完了しました！")
-                if st.button("🔙 通常モードに戻る", use_container_width=True):
-                    st.session_state.card_mode = "unclassified"
-                    st.session_state.reviewed_indices.clear()
-                    st.rerun()
-
-        if not active_deck.empty:
-            current_idx = active_deck.index[0]
-            row = active_deck.loc[current_idx]
-            
-            date_val = row.get("ご利用日", "-")
-            store_val = row.get("ご利用内容", "-")
-            amount_val = int(row.get("金額", 0))
-            member_val = row.get("カード会員様名", "")
-            current_cat = row.get("仕分け", "未分類")
-
-            badge_html = f'<div class="card-badge">現在の分類：{current_cat}</div>' if st.session_state.card_mode == "review_done" else ""
-            member_html = f'<div class="card-member">💳 {member_val}</div>' if member_val else ""
-
-            # ★ インデント（空白）をゼロにしてHTML崩れを完全防止！
-            card_html = (
-                f'<div class="tinder-card">'
-                f'{badge_html}'
-                f'<div class="card-date">📅 {date_val} ｜ {mode_title}</div>'
-                f'<div class="card-store">{store_val}</div>'
-                f'<div class="card-amount">¥ {amount_val:,}</div>'
-                f'{member_html}'
-                f'</div>'
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
-
-            def select_category(cat):
-                st.session_state.pending_changes[current_idx] = cat
-                st.session_state.skipped_indices.discard(current_idx)
-                if st.session_state.card_mode == "review_done":
-                    st.session_state.reviewed_indices.add(current_idx)
-                    st.session_state.history_stack.append(("review_change", current_idx))
-                else:
-                    st.session_state.history_stack.append(("classify", current_idx))
-
-            if st.session_state.card_mode == "review_done":
-                if st.button(f"👌 「{current_cat}」のままでOK！（次へ）", type="primary", use_container_width=True):
-                    st.session_state.reviewed_indices.add(current_idx)
-                    st.session_state.history_stack.append(("review_ok", current_idx))
-                    st.rerun()
-                st.caption("▼ もし分類を修正したい場合は、下のボタンを押すと上書きできます")
-
-            btn_type = "secondary" if st.session_state.card_mode == "review_done" else "primary"
-            b1, b2, b3 = st.columns(3)
-            with b1:
-                if st.button("👫 共有", use_container_width=True, type=btn_type):
-                    select_category("共有")
-                    st.rerun()
-            with b2:
-                if st.button("👨 ハヤト", use_container_width=True, type=btn_type):
-                    select_category("ハヤト")
-                    st.rerun()
-            with b3:
-                if st.button("👩 マナ", use_container_width=True, type=btn_type):
-                    select_category("マナ")
-                    st.rerun()
-
-            s1, s2, s3, s4 = st.columns(4)
-            with s1:
-                if st.button("❓ 保留", use_container_width=True):
-                    select_category("不明(保留)")
-                    st.rerun()
-            with s2:
-                if st.button("🚫 集計外", use_container_width=True):
-                    select_category("集計外")
-                    st.rerun()
-            with s3:
-                if st.session_state.card_mode == "unclassified":
-                    if st.button("⏭️ パス(後で)", use_container_width=True):
-                        st.session_state.skipped_indices.add(current_idx)
-                        st.session_state.history_stack.append(("skip", current_idx))
-                        st.rerun()
-                else:
-                    if st.button("🔙 通常へ戻る", use_container_width=True):
-                        st.session_state.card_mode = "unclassified"
-                        st.rerun()
-            with s4:
-                if st.button("⬅️ 1つ戻る", use_container_width=True, disabled=(len(st.session_state.history_stack) == 0)):
-                    last_action, last_idx = st.session_state.history_stack.pop()
-                    if last_action == "classify":
-                        st.session_state.pending_changes.pop(last_idx, None)
-                    elif last_action == "skip":
-                        st.session_state.skipped_indices.discard(last_idx)
-                    elif last_action == "review_ok":
-                        st.session_state.reviewed_indices.discard(last_idx)
-                    elif last_action == "review_change":
-                        st.session_state.pending_changes.pop(last_idx, None)
-                        st.session_state.reviewed_indices.discard(last_idx)
-                    st.rerun()
-
-        elif st.session_state.card_mode != "review_done":
-            st.success(f"🎉 {selected_month} の新しい未分類カードはすべて処理しました！")
-            
-            c_after1, c_after2 = st.columns(2)
-            with c_after1:
-                if not skipped_df.empty:
-                    if st.button(f"⏭️ パスした明細 ({len(skipped_df)}件) を確認する", type="primary", use_container_width=True):
-                        st.session_state.card_mode = "skipped"
-                        st.rerun()
-                else:
-                    st.info("⏭️ パスして残っている明細はありません。")
-                    
-            with c_after2:
-                if done_month_count > 0:
-                    if st.button(f"👀 仕分け済み ({done_month_count}件) を最終チェックする", use_container_width=True):
-                        st.session_state.reviewed_indices.clear()
-                        st.session_state.card_mode = "review_done"
-                        st.rerun()
-
-        st.markdown("---")
-
-        with st.expander("📋 一覧表でまとめて確認・修正する", expanded=False):
-            c_filter, c_reload = st.columns([6, 4])
-            with c_filter:
-                only_unclassified = st.toggle("🔍「未分類」のみ表示", value=False)
-            with c_reload:
-                if st.button("🔄 一時変更を破棄して再読込", use_container_width=True):
-                    st.session_state.pending_changes.clear()
-                    st.session_state.skipped_indices.clear()
-                    st.session_state.history_stack.clear()
-                    st.rerun()
-
-            table_df = month_df[month_df["仕分け"] == "未分類"].copy() if only_unclassified else month_df.copy()
-            display_df = table_df[cols].copy()
-
-            st.caption("💡 間違えて仕分けた項目を元に戻す時は「🔄 未分類に戻す」を選んで下の保存ボタンを押してください。")
-            edited_df = st.data_editor(
-                display_df,
-                column_config={
-                    "仕分け": st.column_config.SelectboxColumn(
-                        "仕分け",
-                        options=["未分類", "共有", "ハヤト", "マナ", "不明(保留)", "集計外", "🔄 未分類に戻す"],
-                        required=True,
-                        width="small"
-                    ),
-                    "金額": st.column_config.NumberColumn("金額", format="¥%d", disabled=True, width="small"),
-                    "ご利用内容": st.column_config.TextColumn("内容", disabled=True, width="medium"),
-                    "ご利用日": st.column_config.TextColumn("利用日", disabled=True, width="small"),
-                    "カード会員様名": st.column_config.TextColumn("会員", disabled=True, width="small")
-                },
-                hide_index=True,
-                use_container_width=True,
-                height=380
-            )
-
-            if st.button("☁️ 一覧表の変更をクラウドに保存する", use_container_width=True):
-                with st.spinner("最新の状態と合体して保存中..."):
-                    combined_changes = dict(st.session_state.pending_changes)
-                    for idx in edited_df.index:
-                        combined_changes[idx] = edited_df.loc[idx, "仕分け"]
-                    save_changes_to_cloud(combined_changes, cols)
-                    st.session_state.pending_changes.clear()
-                    st.session_state.history_stack.clear()
-                st.success("✅ 保存完了！")
-                st.rerun()
+        # 編集内容を一時メモリに反映
+        for idx in edited_df.index:
+            new_choice = edited_df.loc[idx, "仕分け"]
+            orig_choice = df.loc[idx, "仕分け"]
+            if new_choice != orig_choice:
+                st.session_state.pending_changes[idx] = new_choice
 
     # ================= タブ2：月別精算 =================
     with tab2:

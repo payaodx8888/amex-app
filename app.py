@@ -175,7 +175,7 @@ if "pending_changes" not in st.session_state:
 if "table_key" not in st.session_state:
     st.session_state.table_key = 0
 
-# --- 2. Google スプレッドシート接続 ---
+# --- 2. Google スプレッドシート接続 ＆ キャッシュ読み込み（API制限429防止） ---
 @st.cache_resource
 def init_gspread():
     try:
@@ -188,24 +188,25 @@ def init_gspread():
 
 try:
     client = init_gspread()
-    spreadsheet = client.open("アメックス明細_仕分けDB")
-    sheet = spreadsheet.sheet1
 except Exception as e:
-    st.error("🚨 スプレッドシートに接続できませんでした。")
+    st.error("🚨 認証情報の読み込みに失敗しました。")
     st.code(traceback.format_exc(), language="python")
     st.stop()
 
-# --- 3. お小遣い設定 ＆ 月別精算完了ステータスの管理 ---
 def normalize_month_key(key_str):
-    """過去の『2026年08月請求』のような表記も『26年08月』に統一して照合する"""
     s = str(key_str).strip()
     m = re.match(r'^20(\d{2}年\d{2}月)', s)
     if m:
         return m.group(1)
     return s.replace("請求", "")
 
-def load_all_config():
-    """お小遣い設定シートから全データを読み込む（4列目：精算状態も自動管理）"""
+# ★ スプレッドシートの読み込みを10分間キャッシュ（チェックボックス操作では通信しない）
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_all_sheet_data():
+    spreadsheet = client.open("アメックス明細_仕分けDB")
+    sheet = spreadsheet.sheet1
+    main_records = sheet.get_all_records()
+
     default_h, default_m = 200000, 200000
     cols_cfg = ["対象月", "ハヤトお小遣い", "マナお小遣い", "精算状態"]
     try:
@@ -215,8 +216,8 @@ def load_all_config():
             cfg_sheet = spreadsheet.add_worksheet(title="お小遣い設定", rows=100, cols=4)
             cfg_sheet.update(range_name='A1', values=[cols_cfg, ["基本設定", default_h, default_m, "-"]])
         
-        records = cfg_sheet.get_all_records()
-        cfg_df = pd.DataFrame(records)
+        cfg_records = cfg_sheet.get_all_records()
+        cfg_df = pd.DataFrame(cfg_records)
         if cfg_df.empty:
             cfg_df = pd.DataFrame([{"対象月": "基本設定", "ハヤトお小遣い": default_h, "マナお小遣い": default_m, "精算状態": "-"}])
         for c in cols_cfg:
@@ -224,10 +225,12 @@ def load_all_config():
                 cfg_df[c] = ""
         cfg_df = cfg_df[cols_cfg].copy()
         cfg_df["対象月_正規"] = cfg_df["対象月"].apply(normalize_month_key)
-        return cfg_df
     except Exception:
-        return pd.DataFrame([{"対象月": "基本設定", "ハヤトお小遣い": default_h, "マナお小遣い": default_m, "精算状態": "-", "対象月_正規": "基本設定"}])
+        cfg_df = pd.DataFrame([{"対象月": "基本設定", "ハヤトお小遣い": default_h, "マナお小遣い": default_m, "精算状態": "-", "対象月_正規": "基本設定"}])
 
+    return main_records, cfg_df
+
+# --- 3. お小遣い設定 ＆ 月別精算完了ステータスの管理 ---
 def get_month_config(cfg_df, target_month):
     default_h, default_m = 200000, 200000
     base_row = cfg_df[cfg_df["対象月"] == "基本設定"]
@@ -245,8 +248,10 @@ def get_month_config(cfg_df, target_month):
 
 def update_month_config(target_key, val_h=None, val_m=None, new_status=None):
     try:
+        spreadsheet = client.open("アメックス明細_仕分けDB")
         cfg_sheet = spreadsheet.worksheet("お小遣い設定")
-        cfg_df = load_all_config()
+        _, cfg_df = fetch_all_sheet_data()
+        cfg_df = cfg_df.copy()
         cols_cfg = ["対象月", "ハヤトお小遣い", "マナお小遣い", "精算状態"]
         
         cur_h, cur_m, cur_status = get_month_config(cfg_df, target_key)
@@ -268,6 +273,7 @@ def update_month_config(target_key, val_h=None, val_m=None, new_status=None):
             cfg_sheet.update(range_name='A1', values=data_to_write)
         except Exception:
             cfg_sheet.update('A1', data_to_write)
+        fetch_all_sheet_data.clear()
     except Exception as e:
         st.error(f"設定の保存に失敗しました: {e}")
 
@@ -430,6 +436,8 @@ def auto_sync_from_drive():
         merged_new = merged_new.drop_duplicates(subset=["_key"], keep="first")
         
         cols_order = ["仕分け", "金額", "ご利用内容", "ご利用日", "カード会員様名"]
+        spreadsheet = client.open("アメックス明細_仕分けDB")
+        sheet = spreadsheet.sheet1
         existing_records = sheet.get_all_records()
         
         if not existing_records:
@@ -439,6 +447,7 @@ def auto_sync_from_drive():
                 sheet.update(range_name='A1', values=data_to_write)
             except Exception:
                 sheet.update('A1', data_to_write)
+            fetch_all_sheet_data.clear()
             return len(to_save)
             
         base_df = pd.DataFrame(existing_records)
@@ -464,11 +473,14 @@ def auto_sync_from_drive():
             sheet.update(range_name='A1', values=data_to_write)
         except Exception:
             sheet.update('A1', data_to_write)
+        fetch_all_sheet_data.clear()
         return len(to_add_df)
     except Exception:
         return 0
 
 def save_changes_to_cloud(changes_dict, cols_order):
+    spreadsheet = client.open("アメックス明細_仕分けDB")
+    sheet = spreadsheet.sheet1
     latest_records = sheet.get_all_records()
     latest_df = pd.DataFrame(latest_records)
     latest_df = latest_df[cols_order]
@@ -486,9 +498,14 @@ def save_changes_to_cloud(changes_dict, cols_order):
         sheet.update(range_name='A1', values=data_to_write)
     except Exception:
         sheet.update('A1', data_to_write)
+    fetch_all_sheet_data.clear()
 
-# --- 5. データの読み込みと整備 ---
-existing_data = sheet.get_all_records()
+# --- 5. データの読み込みと整備（キャッシュから高速取得） ---
+try:
+    existing_data, cfg_df = fetch_all_sheet_data()
+except Exception as e:
+    st.error("⏳ Googleスプレッドシートの一時的な通信制限（1分間に60回まで）に達しました。約1分待ってからページを再読み込みしてください。")
+    st.stop()
 
 if not existing_data:
     st.info("💡 まだ明細データがありません。下のボタンを押すとGoogleドライブ内のCSVを自動で読み込みます。")
@@ -517,8 +534,6 @@ df["お店・内容"] = df["ご利用内容"].apply(smart_clean_merchant)
 df["利用日"] = df["ご利用日"].apply(format_short_date)
 df["会員"] = df["カード会員様名"].apply(format_short_member)
 
-# お小遣い＆精算完了ステータス設定の読み込み
-cfg_df = load_all_config()
 settled_map = {}
 for _, r in cfg_df.iterrows():
     st_val = str(r.get("精算状態", "")).strip()
@@ -555,6 +570,7 @@ with st.container():
         if st.button("🔄再読込", use_container_width=True):
             with st.spinner("最新データ＆ドライブCSVを確認中..."):
                 added = auto_sync_from_drive()
+                fetch_all_sheet_data.clear()
                 st.session_state.pending_changes.clear()
                 st.session_state.table_key += 1
             if added > 0:
@@ -714,6 +730,8 @@ with tab2:
                     "カード会員様名": payer_label
                 }])
                 
+                spreadsheet = client.open("アメックス明細_仕分けDB")
+                sheet = spreadsheet.sheet1
                 latest_records = sheet.get_all_records()
                 base_df = pd.DataFrame(latest_records)[cols]
                 combined_df = pd.concat([base_df, new_row_df[cols]], ignore_index=True)
@@ -726,6 +744,7 @@ with tab2:
                     sheet.update(range_name='A1', values=data_to_write)
                 except Exception:
                     sheet.update('A1', data_to_write)
+                fetch_all_sheet_data.clear()
                 st.success(f"✅ 現金立替（{cash_desc}：¥{int(cash_amount):,}）を登録しました！")
                 st.rerun()
 
@@ -772,7 +791,6 @@ with tab3:
     transfer_to_hayato = allow_h - amex_hayato + cash_net_h
     transfer_to_mana = allow_m - amex_mana + cash_net_m
 
-    # ★ 1. 精算完了ステータスの目立つバッジ表示
     if is_settled:
         st.markdown(f'<div class="status-badge-done">✅ {target_m} の口座振込・精算は【{cur_status}】しています</div>', unsafe_allow_html=True)
     else:
@@ -781,7 +799,6 @@ with tab3:
         else:
             st.markdown(f'<div class="status-badge-pending">⏳ 【未精算】仕分け完了済！口座振込がまだ完了していません</div>', unsafe_allow_html=True)
 
-    # 2. クレジット総額 ＆ 現金総額の照合ボックス
     t_col1, t_col2 = st.columns(2)
     with t_col1:
         st.markdown(
@@ -800,7 +817,6 @@ with tab3:
             unsafe_allow_html=True
         )
 
-    # 3. 最終振込額カード
     col_res1, col_res2 = st.columns(2)
     with col_res1:
         action_h = "共用口座 ➡️ ハヤト口座へ振込" if transfer_to_hayato >= 0 else "⚠️ ハヤト口座 ➡️ 共用口座へ入金"
@@ -827,7 +843,6 @@ with tab3:
             unsafe_allow_html=True
         )
 
-    # ★ 4. 誤操作防止！2段階ロック付きの「精算完了ステータス変更」パネル
     with st.expander("🔒 振込・精算完了ステータスの変更（誤操作防止ロック付）", expanded=False):
         if not is_settled:
             if unclassified_total > 0:
@@ -916,13 +931,11 @@ with tab4:
 
         yearly_totals = pivot_df.sum(axis=0)
 
-        # 精算状況（✅完了 / ⏳未精算）の列を先頭に追加
         display_pivot = pivot_df.copy()
         for c in display_pivot.columns:
             display_pivot[c] = display_pivot[c].apply(lambda v: f"¥{v:,}")
         display_pivot.insert(0, "精算状況", [f"✅{settled_map[m]}" if m in settled_map else "⏳未精算" for m in display_pivot.index])
 
-        # 最下部に「年間合計」行を追加
         total_row = {"精算状況": "-"}
         for c in pivot_df.columns:
             total_row[c] = f"¥{int(yearly_totals[c]):,}"

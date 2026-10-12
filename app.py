@@ -8,7 +8,7 @@ import re
 import io
 import traceback
 
-# --- 0. ページ設定＆デザイン（タイトルだけ黒×金、操作パネルは上部固定） ---
+# --- 0. ページ設定＆デザイン（PCタイプの横並び画面をiPhoneでも強制維持） ---
 st.set_page_config(layout="wide", page_title="THE SETTLEMENT | AMEX", page_icon="💳")
 
 st.markdown("""
@@ -18,15 +18,15 @@ st.markdown("""
     background: linear-gradient(135deg, #0a0a0a 0%, #1c1c1c 50%, #050505 100%);
     border: 1px solid #d4af37;
     border-radius: 8px;
-    padding: 12px 10px;
+    padding: 10px 10px;
     text-align: center;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 .luxury-title {
     color: #d4af37;
     font-family: 'Georgia', 'Times New Roman', serif;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: bold;
     letter-spacing: 3px;
     margin: 0;
@@ -38,37 +38,80 @@ st.markdown("""
     margin-top: 2px;
 }
 
-/* ★ 操作ボタンパネルを画面上部にピタッと固定（スクロールしても消えない） */
+/* ★ 操作ボタンパネルを画面上部にピタッと固定 */
 div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
     position: sticky;
     top: 2.8rem;
     z-index: 999;
     background-color: var(--background-color, #ffffff);
-    padding: 10px 12px;
+    padding: 8px 10px;
     border: 2px solid #d4af37;
     border-radius: 10px;
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-    margin-bottom: 12px;
+    margin-bottom: 10px;
+}
+
+/* ★ iPhone（スマホ）でも縦1列に崩さず、PCと全く同じ「横並び」を強制維持する設定 */
+div[data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 0.3rem !important;
+    align-items: center !important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    min-width: 0px !important;
+    width: auto !important;
+    flex: 1 1 0% !important;
 }
 
 /* 選択中の明細プレビューボックス */
 .target-box {
     background-color: #fff9db;
     border-left: 5px solid #f59f00;
-    padding: 8px 12px;
+    padding: 6px 10px;
     border-radius: 6px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     color: #1a1a1a;
 }
 .target-main {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: bold;
     color: #111111;
 }
 .target-raw {
     font-size: 11px;
     color: #666666;
-    margin-top: 3px;
+    margin-top: 2px;
+}
+
+/* スマホ画面で開いた時だけ、PCレイアウトのまま綺麗に収まるよう余白と文字サイズを最適化 */
+@media (max-width: 768px) {
+    .block-container {
+        padding-left: 0.4rem !important;
+        padding-right: 0.4rem !important;
+        padding-top: 1.2rem !important;
+    }
+    div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
+        top: 2.2rem !important;
+        padding: 6px 6px !important;
+    }
+    div[data-testid="stButton"] button {
+        padding: 0.2rem 0.1rem !important;
+        min-height: 2.1rem !important;
+    }
+    div[data-testid="stButton"] button p {
+        font-size: 10.5px !important;
+        line-height: 1.1 !important;
+        white-space: nowrap !important;
+    }
+    .target-main {
+        font-size: 12.5px !important;
+    }
+    .target-raw {
+        font-size: 10px !important;
+    }
 }
 </style>
 <div class="luxury-banner">
@@ -79,15 +122,15 @@ div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
 
 # --- 1. セッション状態の初期化 ---
 if "pending_changes" not in st.session_state:
-    st.session_state.pending_changes = {}  # {行index: "分類"}
+    st.session_state.pending_changes = {}
 if "history_stack" not in st.session_state:
-    st.session_state.history_stack = []    # Undo履歴 [(対象indexリスト, {変更前状態})]
+    st.session_state.history_stack = []
 if "cursor_idx" not in st.session_state:
-    st.session_state.cursor_idx = None     # 現在注目している基準行
+    st.session_state.cursor_idx = None
 if "selected_indices" not in st.session_state:
-    st.session_state.selected_indices = [] # 現在強調（ハイライト）されている行リスト
+    st.session_state.selected_indices = []
 if "table_key" not in st.session_state:
-    st.session_state.table_key = 0         # テーブル選択リセット用カウンター
+    st.session_state.table_key = 0
 
 # --- 2. Google スプレッドシート接続 ---
 @st.cache_resource
@@ -108,7 +151,7 @@ except Exception as e:
     st.code(traceback.format_exc(), language="python")
     st.stop()
 
-# --- 3. ユーティリティ関数（5日締め計算 ＆ アメックス文字列クレンジング） ---
+# --- 3. ユーティリティ関数 ---
 def calc_billing_month(date_str):
     try:
         dt = pd.to_datetime(str(date_str), errors='coerce')
@@ -125,7 +168,6 @@ def calc_billing_month(date_str):
         return "日付不明"
 
 def format_short_date(date_str):
-    """日付を『08/06(木)』のように曜日付きで見やすく変換"""
     try:
         dt = pd.to_datetime(str(date_str), errors='coerce')
         if pd.isna(dt):
@@ -136,12 +178,9 @@ def format_short_date(date_str):
         return str(date_str)
 
 def smart_clean_merchant(raw_name):
-    """アメックスの分かりづらい明細文字列から本社住所や法人格を除去してスッキリ変換"""
     if pd.isna(raw_name):
         return "-"
     s = str(raw_name)
-    
-    # よく使うサービスのスマート変換辞書
     known_rules = [
         ("AMAZON", "📦 Amazon"),
         ("ｱﾏｿﾞﾝ", "📦 Amazon"),
@@ -168,11 +207,9 @@ def smart_clean_merchant(raw_name):
         if key in s_upper:
             return clean_label
 
-    # 1. 全角スペース・連続スペースの後ろにある「都道府県＋市区町村」の住所表記をカット
     s = re.sub(r'[\s ]+(東京都|神奈川県|千葉県|埼玉県|大阪府|京都府|北海道|福岡県|愛知県|兵庫県|沖縄県).*$', '', s)
     s = re.sub(r'[\s ]+[^\s ]+(都|道|府|県)[\s ]+[^\s ]+(区|市|町|村).*$', '', s)
     
-    # 2. 法人格や不要な記号をカット
     remove_words = [
         "株式会社", "（株）", "(株)", "ｶﾌﾞｼｷｶﾞｲｼｬ", "ｶﾌﾞｼｷｶﾞｲｼ", "（同）", "合同会社",
         "一般社団法人", "公益社団法人", "ｼﾞｬﾊﾟﾝ", "CO.,LTD.", "LTD."
@@ -180,12 +217,10 @@ def smart_clean_merchant(raw_name):
     for w in remove_words:
         s = s.replace(w, "")
         
-    # 余分な空白を整理
     s = re.sub(r'[\s ]+', ' ', s).strip()
     return s if s else str(raw_name)
 
 def format_short_member(member_str):
-    """カード会員名をスマホで見やすいように短縮"""
     m = str(member_str).upper()
     if "HAYATO" in m:
         return "👨 ハヤト"
@@ -232,7 +267,6 @@ def save_changes_to_cloud(changes_dict, cols_order):
         sheet.update('A1', data_to_write)
 
 def sync_csvs_from_drive(base_df, cols_order):
-    """Googleドライブ内の共有フォルダにあるCSVを自動で探してスプレッドシートへ追加する"""
     authed_session = AuthorizedSession(client.http_client.auth)
     query = "mimeType = 'text/csv' and trashed = false"
     resp = authed_session.get(
@@ -308,7 +342,6 @@ else:
     cols = [c for c in base_cols if c in df.columns]
     df = df[cols].copy()
     
-    # 一時変更メモリを画面のdfに反映
     for idx, choice in st.session_state.pending_changes.items():
         if idx < len(df):
             df.loc[idx, "仕分け"] = "未分類" if choice == "🔄 未分類に戻す" else choice
@@ -324,20 +357,20 @@ else:
         billing_months.append("日付不明")
     billing_options = billing_months + ["すべて表示"]
 
-    # 上部：月選択 ＆ 未分類フィルター
-    c_top1, c_top2, c_top3 = st.columns([5, 3, 2])
+    # 上部：月選択 ＆ 未分類フィルター（ここも横1列を維持）
+    c_top1, c_top2, c_top3 = st.columns([4.5, 3.5, 2])
     with c_top1:
-        selected_month = st.selectbox("📅 請求月（毎月5日締め）", options=billing_options, index=0, label_visibility="collapsed")
+        selected_month = st.selectbox("📅 請求月", options=billing_options, index=0, label_visibility="collapsed")
     with c_top2:
-        only_unclassified = st.toggle("🔍「未分類」のみ表示", value=False)
+        only_unclassified = st.toggle("🔍未分類のみ", value=False)
     with c_top3:
-        if st.button("🔄 最新再読込", use_container_width=True):
+        if st.button("🔄 更新", use_container_width=True):
             st.session_state.pending_changes.clear()
             st.session_state.selected_indices = []
             st.rerun()
 
     # --- 5. メイン画面：3つのタブ ---
-    tab1, tab2, tab3 = st.tabs(["⚡ 一覧＆ボタン仕分け", "📊 月別精算", "📈 推移・ドライブ自動連携"])
+    tab1, tab2, tab3 = st.tabs(["⚡ 一覧＆ボタン仕分け", "📊 月別精算", "📈 推移・ドライブ連携"])
 
     # ================= タブ1：一覧ハイライト ＆ 固定ワンタップボタン =================
     with tab1:
@@ -350,7 +383,6 @@ else:
         view_indices = list(view_df.index)
         unclassified_indices = list(view_df[view_df["仕分け"] == "未分類"].index)
 
-        # カーソル（現在選択されている行）の自動調整
         valid_selected = [i for i in st.session_state.selected_indices if i in view_indices]
         if not valid_selected:
             if st.session_state.cursor_idx in view_indices:
@@ -363,11 +395,10 @@ else:
         if valid_selected:
             st.session_state.cursor_idx = valid_selected[0]
 
-        # ★ 画面上部にピタッと固定される操作パネル（スクロールしても付いてくる！）
+        # ★ 画面上部にピタッと固定される操作パネル（PC・iPhone共通の横並びレイアウト）
         with st.container():
             st.markdown('<div class="fixed-action-bar"></div>', unsafe_allow_html=True)
             
-            # 1) 現在ハイライト中の明細プレビュー ＆ 欄外に小さく正式データを表示
             if valid_selected:
                 first_row = df.loc[valid_selected[0]]
                 if len(valid_selected) == 1:
@@ -375,8 +406,8 @@ else:
                     search_url = f"https://www.google.com/search?q={urllib.parse.quote(raw_text)}"
                     st.markdown(
                         f'<div class="target-box">'
-                        f'<div class="target-main">🎯 選択中: {first_row["曜日付日付"]} ｜ {first_row["スッキリ店名"]} ｜ ¥ {first_row["金額"]:,} <span style="font-size:12px; font-weight:normal;">({first_row["会員短縮"]} / 現在: {first_row["仕分け"]})</span></div>'
-                        f'<div class="target-raw">📄 請求書原文: {raw_text} &nbsp; <a href="{search_url}" target="_blank" style="color:#b8860b;">🔍 Googleで調べる</a></div>'
+                        f'<div class="target-main">🎯 選択中: {first_row["曜日付日付"]} ｜ {first_row["スッキリ店名"]} ｜ ¥ {first_row["金額"]:,} <span style="font-size:11px; font-weight:normal;">({first_row["会員短縮"]} / 現在: {first_row["仕分け"]})</span></div>'
+                        f'<div class="target-raw">📄 請求書原文: {raw_text} &nbsp; <a href="{search_url}" target="_blank" style="color:#b8860b;">🔍 Google検索</a></div>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
@@ -388,13 +419,12 @@ else:
                     raw_list = " / ".join(df.loc[valid_selected[:3], "ご利用内容"].astype(str).tolist())
                     st.markdown(
                         f'<div class="target-box">'
-                        f'<div class="target-main">🎯 {len(valid_selected)}件 まとめて選択中 （合計 ¥ {total_sel_amt:,}）: {names_preview}</div>'
+                        f'<div class="target-main">🎯 {len(valid_selected)}件 選択中 （合計 ¥ {total_sel_amt:,}）: {names_preview}</div>'
                         f'<div class="target-raw">📄 請求書原文: {raw_list}</div>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
 
-            # 仕分け実行関数（選択行を一括変更し、自動で次の未分類行へ進む）
             def apply_category(cat_name):
                 if not st.session_state.selected_indices:
                     return
@@ -405,7 +435,6 @@ else:
                 for i in st.session_state.selected_indices:
                     st.session_state.pending_changes[i] = cat_name
                 
-                # 次の未分類の行を自動で探してカーソルを進める
                 remaining_unclass = [
                     i for i in view_indices 
                     if i not in st.session_state.selected_indices 
@@ -417,7 +446,6 @@ else:
                 elif remaining_unclass:
                     next_idx = remaining_unclass[0]
                 else:
-                    # 未分類がもうなければ1つ下の行へ
                     pos = view_indices.index(last_selected) if last_selected in view_indices else 0
                     next_idx = view_indices[min(pos + 1, len(view_indices) - 1)]
                 
@@ -425,8 +453,8 @@ else:
                 st.session_state.selected_indices = [next_idx]
                 st.session_state.table_key += 1
 
-            # 2) ワンタップ仕分けボタン（メイン：共有・ハヤト・マナ）
-            b1, b2, b3, b4, b5, b6 = st.columns([2, 2, 2, 1.3, 1.3, 1.4])
+            # 1段目：ワンタップ仕分けボタン（PCでもiPhoneでも横1列）
+            b1, b2, b3, b4, b5, b6 = st.columns([1.8, 1.8, 1.8, 1.4, 1.5, 1.4])
             with b1:
                 if st.button("👫 共有", type="primary", use_container_width=True):
                     apply_category("共有")
@@ -448,7 +476,7 @@ else:
                     apply_category("集計外")
                     st.rerun()
             with b6:
-                if st.button("⬅️ 1つ戻る", use_container_width=True, disabled=(len(st.session_state.history_stack) == 0)):
+                if st.button("⬅️ 戻る", use_container_width=True, disabled=(len(st.session_state.history_stack) == 0)):
                     indices_to_restore, prev_map = st.session_state.history_stack.pop()
                     for i, old_cat in prev_map.items():
                         st.session_state.pending_changes[i] = "🔄 未分類に戻す" if old_cat == "未分類" else old_cat
@@ -457,10 +485,10 @@ else:
                     st.session_state.table_key += 1
                     st.rerun()
 
-            # 3) 選択範囲を広げる・移動する調整ボタン群
-            r1, r2, r3, r4, r5, r6 = st.columns([1.8, 1.8, 2.2, 2.2, 1.5, 1.5])
+            # 2段目：選択範囲を広げる・移動する調整ボタン（PCでもiPhoneでも横1列）
+            r1, r2, r3, r4, r5, r6 = st.columns([1.5, 1.5, 2.0, 2.0, 1.4, 1.6])
             with r1:
-                if st.button("➕ 下に広げる(+1)", use_container_width=True):
+                if st.button("➕ 下(+1)", use_container_width=True):
                     if valid_selected:
                         last_i = valid_selected[-1]
                         pos = view_indices.index(last_i)
@@ -469,7 +497,7 @@ else:
                             st.session_state.table_key += 1
                             st.rerun()
             with r2:
-                if st.button("➕ 下に広げる(+5)", use_container_width=True):
+                if st.button("➕ 下(+5)", use_container_width=True):
                     if valid_selected:
                         last_i = valid_selected[-1]
                         pos = view_indices.index(last_i)
@@ -480,22 +508,21 @@ else:
                         st.session_state.table_key += 1
                         st.rerun()
             with r3:
-                target_date_str = df.loc[valid_selected[0], "曜日付日付"] if valid_selected else ""
-                if st.button(f"📅 {target_date_str} を全選択", use_container_width=True, disabled=not valid_selected):
+                if st.button("📅 同日全選択", use_container_width=True, disabled=not valid_selected):
                     raw_d = df.loc[valid_selected[0], "ご利用日"]
                     same_day_idx = list(view_df[view_df["ご利用日"] == raw_d].index)
                     st.session_state.selected_indices = same_day_idx
                     st.session_state.table_key += 1
                     st.rerun()
             with r4:
-                if st.button("🏪 同じ店名を全選択", use_container_width=True, disabled=not valid_selected):
+                if st.button("🏪 同店全選択", use_container_width=True, disabled=not valid_selected):
                     clean_s = df.loc[valid_selected[0], "スッキリ店名"]
                     same_store_idx = list(view_df[view_df["スッキリ店名"] == clean_s].index)
                     st.session_state.selected_indices = same_store_idx
                     st.session_state.table_key += 1
                     st.rerun()
             with r5:
-                if st.button("⬇️ 次の行へ", use_container_width=True, disabled=not valid_selected):
+                if st.button("⬇️ 次へ", use_container_width=True, disabled=not valid_selected):
                     last_i = valid_selected[-1]
                     pos = view_indices.index(last_i)
                     next_i = view_indices[(pos + 1) % len(view_indices)]
@@ -505,16 +532,15 @@ else:
                     st.rerun()
             with r6:
                 if len(valid_selected) > 1:
-                    if st.button("✖️ 1行に戻す", use_container_width=True):
+                    if st.button("✖️ 1行へ", use_container_width=True):
                         st.session_state.selected_indices = [valid_selected[0]]
                         st.session_state.table_key += 1
                         st.rerun()
                 else:
-                    if st.button("🔄 未分類へ戻す", use_container_width=True, disabled=not valid_selected):
+                    if st.button("🔄 未分類へ", use_container_width=True, disabled=not valid_selected):
                         apply_category("🔄 未分類に戻す")
                         st.rerun()
 
-            # 4) 未保存の変更があるときは、同じ固定パネル内に保存ボタンを表示
             pending_count = len(st.session_state.pending_changes)
             if pending_count > 0:
                 if st.button(f"☁️ 現在 {pending_count} 件の変更あり！ここを押してクラウドに一括保存する", type="primary", use_container_width=True):
@@ -525,13 +551,10 @@ else:
                     st.success("✅ クラウドへの保存が完了しました！")
                     st.rerun()
 
-        # --- 一覧表（選択中の行を黄色で強調表示 ＆ 左端のチェックでも選択可能） ---
+        # --- 一覧表 ---
         if view_df.empty:
             st.success(f"🎉 {selected_month} の対象明細はすべて仕分け完了しています！")
         else:
-            st.caption("💡 上のボタンで選択範囲を広げるか、表の左端のチェックボックスをタップして複数行を直接選ぶこともできます。")
-            
-            # 表示用のテーブル作成
             disp_df = pd.DataFrame(index=view_df.index)
             disp_df["状態"] = [
                 f"👉 🎯 選択中 ({view_df.loc[i, '仕分け']})" if i in valid_selected else view_df.loc[i, "仕分け"]
@@ -543,11 +566,9 @@ else:
             disp_df["会員"] = view_df["会員短縮"]
             disp_df["請求書原文（正式データ）"] = view_df["ご利用内容"]
 
-            # 強調表示（ハイライト）のスタイリング関数
             def highlight_rows(row):
                 idx = row.name
                 if idx in valid_selected:
-                    # 選択中の行は鮮やかなゴールドイエロー＋太字で強調！
                     return ['background-color: #fff3bf; color: #000000; font-weight: bold; border-top: 2px solid #f59f00; border-bottom: 2px solid #f59f00;'] * len(row)
                 
                 cat = view_df.loc[idx, "仕分け"]
@@ -570,10 +591,9 @@ else:
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="multi-row",
-                key=f" interactive_table_{st.session_state.table_key}"
+                key=f"interactive_table_{st.session_state.table_key}"
             )
 
-            # ユーザーが表の左端のチェックボックスをタップして行を選んだ場合、その行をハイライト対象にする
             if event and event.selection and event.selection.rows:
                 clicked_indices = [view_indices[pos] for pos in event.selection.rows if pos < len(view_indices)]
                 if clicked_indices and clicked_indices != st.session_state.selected_indices:

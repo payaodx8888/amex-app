@@ -157,9 +157,9 @@ div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid=
         white-space: nowrap !important;
     }
     div[data-baseweb="select"] > div {
-        padding-left: 5px !important;
-        padding-right: 2px !important;
-        font-size: 12.5px !important;
+        padding-left: 6px !important;
+        padding-right: 4px !important;
+        font-size: 13px !important;
     }
 }
 </style>
@@ -545,21 +545,15 @@ if "日付不明" in df["請求月"].unique():
     billing_months.append("日付不明")
 billing_options = billing_months + ["すべて"]
 
-def format_month_option(m_key):
-    if m_key in ["すべて", "日付不明"]:
-        return m_key
-    return f"✅{m_key}" if m_key in settled_map else f"⏳{m_key}"
-
-# --- 上部：請求月選択（✅完了 / ⏳未精算 マーク付き） ---
+# --- 上部：請求月選択（余計なアイコンなし・iPhoneでも月までスッキリ表示） ---
 with st.container():
     st.markdown('<div class="nowrap-bar"></div>', unsafe_allow_html=True)
-    c_top1, c_top2, c_top3, c_top4 = st.columns([4.1, 2.0, 1.9, 2.0])
+    c_top1, c_top2, c_top3, c_top4 = st.columns([4.4, 1.9, 1.8, 1.9])
     with c_top1:
         selected_month = st.selectbox(
             "📅 請求月",
             options=billing_options,
             index=0,
-            format_func=format_month_option,
             label_visibility="collapsed"
         )
     with c_top2:

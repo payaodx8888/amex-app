@@ -64,6 +64,30 @@ div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid=
     flex: 1 1 0% !important;
 }
 
+/* 精算完了・未完了のステータスバナー */
+.status-badge-done {
+    background-color: #ebfbee;
+    border: 2px solid #2b8a3e;
+    color: #1b5e20;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-weight: bold;
+    font-size: 15px;
+    text-align: center;
+    margin-bottom: 10px;
+}
+.status-badge-pending {
+    background-color: #fff9db;
+    border: 2px solid #f59f00;
+    color: #7c4d00;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-weight: bold;
+    font-size: 15px;
+    text-align: center;
+    margin-bottom: 10px;
+}
+
 /* 月別精算：クレカ＆現金の総額照合バー */
 .total-check-box {
     background-color: #f8f9fa;
@@ -133,9 +157,9 @@ div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid=
         white-space: nowrap !important;
     }
     div[data-baseweb="select"] > div {
-        padding-left: 6px !important;
-        padding-right: 4px !important;
-        font-size: 13px !important;
+        padding-left: 5px !important;
+        padding-right: 2px !important;
+        font-size: 12.5px !important;
     }
 }
 </style>
@@ -171,47 +195,75 @@ except Exception as e:
     st.code(traceback.format_exc(), language="python")
     st.stop()
 
-# --- 3. お小遣い設定シートの読み込み・保存（基本20万円） ---
-def get_allowance_settings(target_month):
+# --- 3. お小遣い設定 ＆ 月別精算完了ステータスの管理 ---
+def normalize_month_key(key_str):
+    """過去の『2026年08月請求』のような表記も『26年08月』に統一して照合する"""
+    s = str(key_str).strip()
+    m = re.match(r'^20(\d{2}年\d{2}月)', s)
+    if m:
+        return m.group(1)
+    return s.replace("請求", "")
+
+def load_all_config():
+    """お小遣い設定シートから全データを読み込む（4列目：精算状態も自動管理）"""
     default_h, default_m = 200000, 200000
+    cols_cfg = ["対象月", "ハヤトお小遣い", "マナお小遣い", "精算状態"]
     try:
         try:
             cfg_sheet = spreadsheet.worksheet("お小遣い設定")
         except Exception:
             cfg_sheet = spreadsheet.add_worksheet(title="お小遣い設定", rows=100, cols=4)
-            cfg_sheet.update(range_name='A1', values=[["対象月", "ハヤトお小遣い", "マナお小遣い"], ["基本設定", default_h, default_m]])
+            cfg_sheet.update(range_name='A1', values=[cols_cfg, ["基本設定", default_h, default_m, "-"]])
         
         records = cfg_sheet.get_all_records()
         cfg_df = pd.DataFrame(records)
         if cfg_df.empty:
-            return default_h, default_m
-            
-        base_row = cfg_df[cfg_df["対象月"] == "基本設定"]
-        base_h = int(base_row["ハヤトお小遣い"].iloc[0]) if not base_row.empty else default_h
-        base_m = int(base_row["マナお小遣い"].iloc[0]) if not base_row.empty else default_m
-        
-        legacy_key = f"20{target_month}請求"
-        month_row = cfg_df[cfg_df["対象月"].isin([target_month, legacy_key])]
-        cur_h = int(month_row["ハヤトお小遣い"].iloc[0]) if not month_row.empty else base_h
-        cur_m = int(month_row["マナお小遣い"].iloc[0]) if not month_row.empty else base_m
-        return cur_h, cur_m
+            cfg_df = pd.DataFrame([{"対象月": "基本設定", "ハヤトお小遣い": default_h, "マナお小遣い": default_m, "精算状態": "-"}])
+        for c in cols_cfg:
+            if c not in cfg_df.columns:
+                cfg_df[c] = ""
+        cfg_df = cfg_df[cols_cfg].copy()
+        cfg_df["対象月_正規"] = cfg_df["対象月"].apply(normalize_month_key)
+        return cfg_df
     except Exception:
-        return default_h, default_m
+        return pd.DataFrame([{"対象月": "基本設定", "ハヤトお小遣い": default_h, "マナお小遣い": default_m, "精算状態": "-", "対象月_正規": "基本設定"}])
 
-def save_allowance_setting(target_key, val_h, val_m):
+def get_month_config(cfg_df, target_month):
+    default_h, default_m = 200000, 200000
+    base_row = cfg_df[cfg_df["対象月"] == "基本設定"]
+    base_h = int(pd.to_numeric(base_row["ハヤトお小遣い"].iloc[0], errors='coerce') or default_h) if not base_row.empty else default_h
+    base_m = int(pd.to_numeric(base_row["マナお小遣い"].iloc[0], errors='coerce') or default_m) if not base_row.empty else default_m
+    
+    month_row = cfg_df[cfg_df["対象月_正規"] == target_month]
+    if not month_row.empty:
+        cur_h = int(pd.to_numeric(month_row["ハヤトお小遣い"].iloc[-1], errors='coerce') or base_h)
+        cur_m = int(pd.to_numeric(month_row["マナお小遣い"].iloc[-1], errors='coerce') or base_m)
+        status_str = str(month_row["精算状態"].iloc[-1]).strip()
+    else:
+        cur_h, cur_m, status_str = base_h, base_m, ""
+    return cur_h, cur_m, status_str
+
+def update_month_config(target_key, val_h=None, val_m=None, new_status=None):
     try:
         cfg_sheet = spreadsheet.worksheet("お小遣い設定")
-        records = cfg_sheet.get_all_records()
-        cfg_df = pd.DataFrame(records)
-        if cfg_df.empty:
-            cfg_df = pd.DataFrame([{"対象月": "基本設定", "ハヤトお小遣い": 200000, "マナお小遣い": 200000}])
-        if target_key in cfg_df["対象月"].values:
-            cfg_df.loc[cfg_df["対象月"] == target_key, ["ハヤトお小遣い", "マナお小遣い"]] = [val_h, val_m]
+        cfg_df = load_all_config()
+        cols_cfg = ["対象月", "ハヤトお小遣い", "マナお小遣い", "精算状態"]
+        
+        cur_h, cur_m, cur_status = get_month_config(cfg_df, target_key)
+        save_h = val_h if val_h is not None else cur_h
+        save_m = val_m if val_m is not None else cur_m
+        save_st = new_status if new_status is not None else cur_status
+
+        match_mask = (cfg_df["対象月_正規"] == target_key)
+        if match_mask.any():
+            cfg_df.loc[match_mask, ["対象月", "ハヤトお小遣い", "マナお小遣い", "精算状態"]] = [target_key, save_h, save_m, save_st]
         else:
-            new_row = pd.DataFrame([{"対象月": target_key, "ハヤトお小遣い": val_h, "マナお小遣い": val_m}])
+            new_row = pd.DataFrame([{"対象月": target_key, "ハヤトお小遣い": save_h, "マナお小遣い": save_m, "精算状態": save_st, "対象月_正規": target_key}])
             cfg_df = pd.concat([cfg_df, new_row], ignore_index=True)
+
+        save_df = cfg_df[cols_cfg]
         cfg_sheet.clear()
-        data_to_write = [cfg_df.columns.values.tolist()] + cfg_df.values.tolist()
+        data_to_write = [cols_cfg] + save_df.values.tolist()
         try:
             cfg_sheet.update(range_name='A1', values=data_to_write)
         except Exception:
@@ -219,7 +271,7 @@ def save_allowance_setting(target_key, val_h, val_m):
     except Exception as e:
         st.error(f"設定の保存に失敗しました: {e}")
 
-# --- 4. ユーティリティ関数（月表記を『26年08月』に短縮） ---
+# --- 4. ユーティリティ関数 ---
 def calc_billing_month(date_str):
     try:
         dt = pd.to_datetime(str(date_str), errors='coerce')
@@ -465,17 +517,36 @@ df["お店・内容"] = df["ご利用内容"].apply(smart_clean_merchant)
 df["利用日"] = df["ご利用日"].apply(format_short_date)
 df["会員"] = df["カード会員様名"].apply(format_short_member)
 
+# お小遣い＆精算完了ステータス設定の読み込み
+cfg_df = load_all_config()
+settled_map = {}
+for _, r in cfg_df.iterrows():
+    st_val = str(r.get("精算状態", "")).strip()
+    if st_val.startswith("完了"):
+        settled_map[r["対象月_正規"]] = st_val
+
 billing_months = sorted([m for m in df["請求月"].unique() if m != "日付不明"], reverse=True)
 if "日付不明" in df["請求月"].unique():
     billing_months.append("日付不明")
 billing_options = billing_months + ["すべて"]
 
-# --- 上部：請求月選択（『26年08月』表記でスマホでも月までクッキリ表示） ---
+def format_month_option(m_key):
+    if m_key in ["すべて", "日付不明"]:
+        return m_key
+    return f"✅{m_key}" if m_key in settled_map else f"⏳{m_key}"
+
+# --- 上部：請求月選択（✅完了 / ⏳未精算 マーク付き） ---
 with st.container():
     st.markdown('<div class="nowrap-bar"></div>', unsafe_allow_html=True)
-    c_top1, c_top2, c_top3, c_top4 = st.columns([4.0, 2.1, 1.9, 2.0])
+    c_top1, c_top2, c_top3, c_top4 = st.columns([4.1, 2.0, 1.9, 2.0])
     with c_top1:
-        selected_month = st.selectbox("📅 請求月", options=billing_options, index=0, label_visibility="collapsed")
+        selected_month = st.selectbox(
+            "📅 請求月",
+            options=billing_options,
+            index=0,
+            format_func=format_month_option,
+            label_visibility="collapsed"
+        )
     with c_top2:
         only_unclassified = st.toggle("🔍未分類", value=False)
     with c_top3:
@@ -664,7 +735,7 @@ with tab2:
         show_cash = cash_history_df[["請求月", "利用日", "金額", "お店・内容", "会員", "仕分け"]].sort_index(ascending=False)
         st.dataframe(show_cash.style.format({"金額": "¥{:,}"}), hide_index=True, use_container_width=True)
 
-# ================= タブ3：月別精算 =================
+# ================= タブ3：月別精算（ステータス管理 ＆ 2段階ロック付き） =================
 with tab3:
     target_m = selected_month if selected_month != "すべて" else (billing_months[0] if billing_months else "26年09月")
     st.subheader(f"🏦 {target_m}請求分 の精算")
@@ -672,7 +743,8 @@ with tab3:
     month_df = df[df["請求月"] == target_m].copy()
     calc_df = month_df[month_df["仕分け"] != "集計外"].copy()
 
-    allow_h, allow_m = get_allowance_settings(target_m)
+    allow_h, allow_m, cur_status = get_month_config(cfg_df, target_m)
+    is_settled = cur_status.startswith("完了")
 
     is_cash = calc_df["カード会員様名"].astype(str).str.contains("現金", na=False)
     amex_df = calc_df[~is_cash]
@@ -700,11 +772,16 @@ with tab3:
     transfer_to_hayato = allow_h - amex_hayato + cash_net_h
     transfer_to_mana = allow_m - amex_mana + cash_net_m
 
-    if unclassified_total > 0:
-        st.warning(f"⚠️ 未分類が **¥ {unclassified_total:,}** 残っています")
+    # ★ 1. 精算完了ステータスの目立つバッジ表示
+    if is_settled:
+        st.markdown(f'<div class="status-badge-done">✅ {target_m} の口座振込・精算は【{cur_status}】しています</div>', unsafe_allow_html=True)
     else:
-        st.success("✨ 今月の仕分けはすべて完了しています！")
+        if unclassified_total > 0:
+            st.markdown(f'<div class="status-badge-pending">⏳ 【未精算】未分類の明細が ¥ {unclassified_total:,} 残っています</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="status-badge-pending">⏳ 【未精算】仕分け完了済！口座振込がまだ完了していません</div>', unsafe_allow_html=True)
 
+    # 2. クレジット総額 ＆ 現金総額の照合ボックス
     t_col1, t_col2 = st.columns(2)
     with t_col1:
         st.markdown(
@@ -723,6 +800,7 @@ with tab3:
             unsafe_allow_html=True
         )
 
+    # 3. 最終振込額カード
     col_res1, col_res2 = st.columns(2)
     with col_res1:
         action_h = "共用口座 ➡️ ハヤト口座へ振込" if transfer_to_hayato >= 0 else "⚠️ ハヤト口座 ➡️ 共用口座へ入金"
@@ -749,6 +827,27 @@ with tab3:
             unsafe_allow_html=True
         )
 
+    # ★ 4. 誤操作防止！2段階ロック付きの「精算完了ステータス変更」パネル
+    with st.expander("🔒 振込・精算完了ステータスの変更（誤操作防止ロック付）", expanded=False):
+        if not is_settled:
+            if unclassified_total > 0:
+                st.warning("⚠️ 未分類の明細が残っているため、まだ精算完了にできません。すべて仕分けてから操作してください。")
+            else:
+                st.caption("誤タップ防止のため、下のチェックを入れると完了ボタンが押せるようになります。")
+                unlock = st.checkbox("☑️ 口座振込が完了したことを確認しました（ロック解除）", key=f"unlock_{target_m}")
+                if st.button("✅ この月の精算を【完了】として記録する", type="primary", disabled=not unlock, use_container_width=True):
+                    today_str = datetime.date.today().strftime("%m/%d")
+                    update_month_config(target_m, new_status=f"完了({today_str})")
+                    st.success(f"🎉 {target_m} を精算完了として記録しました！")
+                    st.rerun()
+        else:
+            st.caption(f"現在、{target_m} は「{cur_status}」として記録されています。未精算に戻す場合は下のロックを解除してください。")
+            unlock_revert = st.checkbox("☑️ 未精算の状態に戻すことを確認しました（ロック解除）", key=f"revert_{target_m}")
+            if st.button("↩️ 【未精算】の状態に戻す", disabled=not unlock_revert, use_container_width=True):
+                update_month_config(target_m, new_status="")
+                st.info(f"⏳ {target_m} を未精算に戻しました。")
+                st.rerun()
+
     with st.expander("📊 詳しい内訳（共有・個人・保留）を見る", expanded=True):
         m1, m2 = st.columns(2)
         m1.metric("👫 共有 合計", f"¥ {amex_shared + cash_burden_shared:,}", f"クレカ ¥{amex_shared:,} / 現金 ¥{cash_burden_shared:,}")
@@ -767,15 +866,14 @@ with tab3:
         save_scope = st.radio("反映範囲", options=[f"{target_m}のみ変更", "今後の基本設定として変更"], horizontal=True)
         if st.button("💾 設定を保存", type="primary", use_container_width=True):
             key_to_save = target_m if "のみ" in save_scope else "基本設定"
-            save_allowance_setting(key_to_save, int(new_allow_h), int(new_allow_m))
+            update_month_config(key_to_save, val_h=int(new_allow_h), val_m=int(new_allow_m))
             st.success("✅ 保存しました！")
             st.rerun()
 
-# ================= タブ4：月次推移 ＆ 年（年度）別の年間合計一覧表 =================
+# ================= タブ4：月次推移 ＆ 年別の年間合計一覧表（精算状況つき） =================
 with tab4:
     trend_df = df[(df["仕分け"] != "集計外") & (df["請求月"] != "日付不明")].copy()
     if not trend_df.empty:
-        # "26年08月" から "2026年" を自動抽出（2027年以降のデータが増えれば自動で選択肢に追加される）
         trend_df["対象年"] = trend_df["請求月"].str.extract(r'^(\d{2})年')[0].apply(
             lambda x: f"20{x}年" if pd.notna(x) else "その他"
         )
@@ -809,7 +907,6 @@ with tab4:
         
         st.markdown("---")
         st.subheader(f"📋 {selected_year} の年間合計・月別一覧表")
-        st.caption("※今後2027年、2028年…とデータが増えると、上の「📅 集計・表示する年を選択」からいつでも年ごとに切り替えて年間合計を確認できます。")
 
         pivot_df = monthly_summary.pivot(index="請求月", columns="仕分け", values="金額").fillna(0).astype(int)
         ordered_cats = [c for c in ["共有", "ハヤト", "マナ", "不明(保留)", "未分類"] if c in pivot_df.columns]
@@ -818,8 +915,18 @@ with tab4:
         pivot_df = pivot_df.sort_index(ascending=False)
 
         yearly_totals = pivot_df.sum(axis=0)
-        pivot_with_total = pivot_df.copy()
-        pivot_with_total.loc[f"🏆 {selected_year} 合計"] = yearly_totals
+
+        # 精算状況（✅完了 / ⏳未精算）の列を先頭に追加
+        display_pivot = pivot_df.copy()
+        for c in display_pivot.columns:
+            display_pivot[c] = display_pivot[c].apply(lambda v: f"¥{v:,}")
+        display_pivot.insert(0, "精算状況", [f"✅{settled_map[m]}" if m in settled_map else "⏳未精算" for m in display_pivot.index])
+
+        # 最下部に「年間合計」行を追加
+        total_row = {"精算状況": "-"}
+        for c in pivot_df.columns:
+            total_row[c] = f"¥{int(yearly_totals[c]):,}"
+        display_pivot.loc[f"🏆 {selected_year} 合計"] = total_row
 
         ym1, ym2 = st.columns(2)
         ym1.metric(f"🏆 {selected_year} 総合計", f"¥ {int(yearly_totals.get('月間合計', 0)):,}")
@@ -829,6 +936,6 @@ with tab4:
         ym3.metric("👨 ハヤト 年間合計", f"¥ {int(yearly_totals.get('ハヤト', 0)):,}")
         ym4.metric("👩 マナ 年間合計", f"¥ {int(yearly_totals.get('マナ', 0)):,}")
 
-        st.dataframe(pivot_with_total.style.format("¥{:,}"), use_container_width=True)
+        st.dataframe(display_pivot, use_container_width=True)
     else:
         st.info("推移を表示できるデータがまだありません。")

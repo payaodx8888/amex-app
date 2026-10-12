@@ -38,7 +38,7 @@ st.markdown("""
     background: linear-gradient(145deg, #161616, #0d0d0d);
     border: 2px solid #d4af37;
     border-radius: 16px;
-    padding: 22px 18px;
+    padding: 24px 18px;
     text-align: center;
     margin: 8px 0 16px 0;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
@@ -61,18 +61,18 @@ st.markdown("""
 }
 .card-store {
     color: #ffffff;
-    font-size: 19px;
+    font-size: 20px;
     font-weight: bold;
-    margin: 10px 0;
+    margin: 12px 0;
     line-height: 1.4;
     word-break: break-word;
 }
 .card-amount {
     color: #f7ef8a;
-    font-size: 34px;
+    font-size: 36px;
     font-weight: 800;
     font-family: 'Arial', sans-serif;
-    margin: 10px 0 6px 0;
+    margin: 12px 0 8px 0;
     text-shadow: 0px 2px 8px rgba(212, 175, 55, 0.3);
 }
 .card-member {
@@ -81,9 +81,22 @@ st.markdown("""
     color: #d4af37;
     border: 1px solid #554411;
     border-radius: 20px;
-    padding: 3px 12px;
+    padding: 4px 14px;
     font-size: 12px;
     margin-top: 6px;
+}
+/* プライマリボタン（共有・ハヤト・マナ等）を赤から黒×金に変更 */
+button[kind="primary"] {
+    background: linear-gradient(135deg, #1f1f1f 0%, #0d0d0d 100%) !important;
+    color: #f7ef8a !important;
+    border: 1px solid #d4af37 !important;
+    font-weight: bold !important;
+    padding: 10px 0 !important;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.3) !important;
+}
+button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #d4af37 0%, #aa8520 100%) !important;
+    color: #000000 !important;
 }
 /* 集計カードの装飾 */
 div[data-testid="stMetric"] {
@@ -102,31 +115,33 @@ div[data-testid="stMetricValue"] div {
 }
 </style>
 <div class="luxury-banner">
-    <div class="luxury-title">THE SETTLEMENT</div>
-    <div class="luxury-subtitle">AMEX PRIVATE LEDGER & ANALYTICS</div>
+<div class="luxury-title">THE SETTLEMENT</div>
+<div class="luxury-subtitle">AMEX PRIVATE LEDGER & ANALYTICS</div>
 </div>
 """, unsafe_allow_html=True)
 
 # --- 1. セッション状態（一時保存メモリ）の初期化 ---
 if "pending_changes" not in st.session_state:
-    st.session_state.pending_changes = {}  # {行番号: "選んだ分類"}
+    st.session_state.pending_changes = {}
 if "skipped_indices" not in st.session_state:
-    st.session_state.skipped_indices = set()  # この画面でパスした行番号
+    st.session_state.skipped_indices = set()
 if "history_stack" not in st.session_state:
-    st.session_state.history_stack = []  # 「1つ戻る」用の履歴
+    st.session_state.history_stack = []
 if "card_mode" not in st.session_state:
-    st.session_state.card_mode = "unclassified"  # unclassified / skipped / review_done
+    st.session_state.card_mode = "unclassified"
 if "reviewed_indices" not in st.session_state:
-    st.session_state.reviewed_indices = set()  # 最終確認で「OK」した行番号
+    st.session_state.reviewed_indices = set()
 
-# --- 2. Google スプレッドシート接続 ---
+# --- 2. Google スプレッドシート接続（クラウド＆ローカル完全両対応） ---
 @st.cache_resource
 def init_gspread():
-    if "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        return gspread.service_account_from_dict(creds_dict)
-    else:
-        return gspread.service_account(filename=r'C:\Users\tsu81\OneDrive\Desktop\クレカ精算\key.json')
+    try:
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            return gspread.service_account_from_dict(creds_dict)
+    except Exception:
+        pass
+    return gspread.service_account(filename=r'C:\Users\tsu81\OneDrive\Desktop\クレカ精算\key.json')
 
 try:
     client = init_gspread()
@@ -171,7 +186,6 @@ def clean_and_format_csv(uploaded_file):
     return new_df
 
 def save_changes_to_cloud(changes_dict, cols_order):
-    """一時メモリや表で変更された内容を、クラウドの最新状態と安全に合体して保存する関数"""
     latest_records = sheet.get_all_records()
     latest_df = pd.DataFrame(latest_records)
     latest_df = latest_df[cols_order]
@@ -218,7 +232,6 @@ else:
     cols = [c for c in preferred_order if c in df.columns] + [c for c in df.columns if c not in preferred_order]
     df = df[cols]
     
-    # カード画面で仕分け中の一時データを画面上のdfにも仮反映させる
     for idx, choice in st.session_state.pending_changes.items():
         if idx < len(df):
             df.loc[idx, "仕分け"] = "未分類" if choice == "🔄 未分類に戻す" else choice
@@ -231,16 +244,14 @@ else:
         billing_months.append("日付不明")
     billing_options = billing_months + ["すべて表示"]
 
-    # 画面上部：請求月の選択 ＆ 最新同期ボタン
     top_c1, top_c2 = st.columns([7, 3])
     with top_c1:
         selected_month = st.selectbox("📅 対象の請求月（毎月5日締め基準）", options=billing_options, index=0)
     with top_c2:
-        st.write("") # 余白調整
+        st.write("")
         if st.button("🔄 相手の最新状況を反映", use_container_width=True):
             st.rerun()
 
-    # 未保存のカード仕分けがある場合は、どこからでもすぐ保存できる目立つバーを表示
     pending_count = len(st.session_state.pending_changes)
     if pending_count > 0:
         st.warning(f"⚡ 現在 **{pending_count}件** の仕分けが一時保存されています。作業が終わったら下のボタンでクラウドへ反映してください。")
@@ -262,17 +273,14 @@ else:
         else:
             month_df = df.copy()
 
-        # ① まっさらな未分類（パスしていないもの）
         pure_unclassified_df = month_df[
             (month_df["仕分け"] == "未分類") & 
             (~month_df.index.isin(st.session_state.skipped_indices))
         ]
-        # ② パスして後回しにした未分類
         skipped_df = month_df[
             (month_df["仕分け"] == "未分類") & 
             (month_df.index.isin(st.session_state.skipped_indices))
         ]
-        # ③ すでに仕分け済みの項目（相手または自分が仕分けたもの）で、まだ最終OKしていないもの
         done_review_df = month_df[
             (month_df["仕分け"] != "未分類") & 
             (~month_df.index.isin(st.session_state.reviewed_indices))
@@ -285,7 +293,6 @@ else:
             progress_ratio = done_month_count / total_month_count
             st.progress(progress_ratio, text=f"仕分け進捗: {done_month_count} / {total_month_count} 件完了 ({int(progress_ratio*100)}%) ※すでに仕分け済みの項目は自動でスキップされます")
 
-        # 現在のモードに応じて表示するカードデッキを決定
         active_deck = pd.DataFrame()
         mode_title = ""
 
@@ -294,7 +301,6 @@ else:
                 active_deck = pure_unclassified_df
                 mode_title = f"🆕 未分類のカード（残り {len(active_deck)} 件）"
             else:
-                # 未分類が終わったら自動で選択画面へ
                 active_deck = pd.DataFrame()
         elif st.session_state.card_mode == "skipped":
             if not skipped_df.empty:
@@ -314,7 +320,6 @@ else:
                     st.session_state.reviewed_indices.clear()
                     st.rerun()
 
-        # --- カードデッキに中身がある場合の表示 ---
         if not active_deck.empty:
             current_idx = active_deck.index[0]
             row = active_deck.loc[current_idx]
@@ -325,18 +330,20 @@ else:
             member_val = row.get("カード会員様名", "")
             current_cat = row.get("仕分け", "未分類")
 
-            # 最終確認モードの時は「現在どの分類になっているか」を金色のバッジで表示
             badge_html = f'<div class="card-badge">現在の分類：{current_cat}</div>' if st.session_state.card_mode == "review_done" else ""
+            member_html = f'<div class="card-member">💳 {member_val}</div>' if member_val else ""
 
-            st.markdown(f"""
-            <div class="tinder-card">
-                {badge_html}
-                <div class="card-date">📅 {date_val} ｜ {mode_title}</div>
-                <div class="card-store">{store_val}</div>
-                <div class="card-amount">¥ {amount_val:,}</div>
-                {f'<div class="card-member">💳 {member_val}</div>' if member_val else ''}
-            </div>
-            """, unsafe_allow_html=True)
+            # ★ インデント（空白）をゼロにしてHTML崩れを完全防止！
+            card_html = (
+                f'<div class="tinder-card">'
+                f'{badge_html}'
+                f'<div class="card-date">📅 {date_val} ｜ {mode_title}</div>'
+                f'<div class="card-store">{store_val}</div>'
+                f'<div class="card-amount">¥ {amount_val:,}</div>'
+                f'{member_html}'
+                f'</div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
 
             def select_category(cat):
                 st.session_state.pending_changes[current_idx] = cat
@@ -347,7 +354,6 @@ else:
                 else:
                     st.session_state.history_stack.append(("classify", current_idx))
 
-            # 最終確認モードの場合は、一番上にデカデカと「👌 OK（そのまま次へ）」ボタンを配置！
             if st.session_state.card_mode == "review_done":
                 if st.button(f"👌 「{current_cat}」のままでOK！（次へ）", type="primary", use_container_width=True):
                     st.session_state.reviewed_indices.add(current_idx)
@@ -355,7 +361,6 @@ else:
                     st.rerun()
                 st.caption("▼ もし分類を修正したい場合は、下のボタンを押すと上書きできます")
 
-            # メインの3大ボタン（共有・ハヤト・マナ）
             btn_type = "secondary" if st.session_state.card_mode == "review_done" else "primary"
             b1, b2, b3 = st.columns(3)
             with b1:
@@ -371,7 +376,6 @@ else:
                     select_category("マナ")
                     st.rerun()
 
-            # サブボタン（保留・集計外・パス・1つ戻る）
             s1, s2, s3, s4 = st.columns(4)
             with s1:
                 if st.button("❓ 保留", use_container_width=True):
@@ -405,7 +409,6 @@ else:
                         st.session_state.reviewed_indices.discard(last_idx)
                     st.rerun()
 
-        # --- 未分類カードがすべて終わった後の「最終確認メニュー」 ---
         elif st.session_state.card_mode != "review_done":
             st.success(f"🎉 {selected_month} の新しい未分類カードはすべて処理しました！")
             
@@ -427,7 +430,6 @@ else:
 
         st.markdown("---")
 
-        # --- 一覧表モード（折りたたみ式でいつでも確認・修正可能） ---
         with st.expander("📋 一覧表でまとめて確認・修正する", expanded=False):
             c_filter, c_reload = st.columns([6, 4])
             with c_filter:

@@ -8,7 +8,7 @@ import re
 import io
 import traceback
 
-# --- 0. ページ設定＆デザイン（タイトルだけ黒×金、上部は超スリム1段固定） ---
+# --- 0. ページ設定＆デザイン ---
 st.set_page_config(layout="wide", page_title="THE SETTLEMENT | AMEX", page_icon="💳")
 
 st.markdown("""
@@ -38,8 +38,8 @@ st.markdown("""
     margin-top: 1px;
 }
 
-/* ★ 超スリム1段の操作バーを画面上部にピタッと固定 */
-div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
+/* ★ 仕分けタブの操作バーだけを画面上部にピタッと固定 */
+div[data-testid="stVerticalBlock"]:has(div.fixed-action-bar):not(:has(div[data-testid="stVerticalBlock"] div.fixed-action-bar)) {
     position: sticky;
     top: 2.6rem;
     z-index: 999;
@@ -50,22 +50,42 @@ div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
     margin-bottom: 6px;
 }
 
-/* スマホでもボタンが縦に崩れず横1列を維持する設定 */
-div[data-testid="stHorizontalBlock"] {
+/* ★ スマホでも「最上部の月選択バー」と「仕分けボタンバー」だけは横1列を維持（他タブは自然に縦並びへ） */
+div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid="stVerticalBlock"] div.nowrap-bar)) div[data-testid="stHorizontalBlock"] {
     display: flex !important;
     flex-direction: row !important;
     flex-wrap: nowrap !important;
     gap: 0.25rem !important;
     align-items: center !important;
 }
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
-div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid="stVerticalBlock"] div.nowrap-bar)) div[data-testid="stHorizontalBlock"] > div {
     min-width: 0px !important;
     width: auto !important;
     flex: 1 1 0% !important;
 }
 
-/* 精算結果のハイライトカード */
+/* 月別精算：クレカ＆現金の総額照合バー */
+.total-check-box {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-top: 3px solid #343a40;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+}
+.total-check-label {
+    font-size: 12px;
+    color: #555555;
+    font-weight: bold;
+}
+.total-check-val {
+    font-size: 20px;
+    font-weight: 800;
+    color: #111111;
+    margin-top: 2px;
+}
+
+/* 月別精算：最終振込額のハイライトカード */
 .settlement-card {
     background: linear-gradient(135deg, #141414 0%, #242424 100%);
     border-left: 5px solid #d4af37;
@@ -76,38 +96,38 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
     box-shadow: 0 3px 10px rgba(0,0,0,0.15);
 }
 .settlement-name {
-    color: #c0b283;
-    font-size: 13px;
+    color: #d4af37;
+    font-size: 14px;
     font-weight: bold;
 }
 .settlement-amount {
-    color: #f7ef8a;
-    font-size: 26px;
+    color: #ffffff;
+    font-size: 28px;
     font-weight: 800;
     margin: 4px 0;
 }
 .settlement-detail {
     color: #cccccc;
     font-size: 12px;
-    line-height: 1.5;
+    margin-top: 4px;
 }
 
-/* スマホでの余白とボタンサイズの最適化 */
+/* スマホ画面での余白と固定バーのボタン文字サイズ調整 */
 @media (max-width: 900px) {
     .block-container {
-        padding-left: 0.3rem !important;
-        padding-right: 0.3rem !important;
+        padding-left: 0.4rem !important;
+        padding-right: 0.4rem !important;
         padding-top: 0.8rem !important;
     }
-    div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
+    div[data-testid="stVerticalBlock"]:has(div.fixed-action-bar):not(:has(div[data-testid="stVerticalBlock"] div.fixed-action-bar)) {
         top: 2.0rem !important;
         padding: 4px 2px !important;
     }
-    div[data-testid="stButton"] button {
+    div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid="stVerticalBlock"] div.nowrap-bar)) div[data-testid="stButton"] button {
         padding: 0.15rem 0.08rem !important;
         min-height: 2.0rem !important;
     }
-    div[data-testid="stButton"] button p {
+    div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid="stVerticalBlock"] div.nowrap-bar)) div[data-testid="stButton"] button p {
         font-size: 10.5px !important;
         line-height: 1.1 !important;
         white-space: nowrap !important;
@@ -125,8 +145,6 @@ if "pending_changes" not in st.session_state:
     st.session_state.pending_changes = {}
 if "table_key" not in st.session_state:
     st.session_state.table_key = 0
-if "drive_synced" not in st.session_state:
-    st.session_state.drive_synced = False
 
 # --- 2. Google スプレッドシート接続 ---
 @st.cache_resource
@@ -150,7 +168,6 @@ except Exception as e:
 
 # --- 3. お小遣い設定シートの読み込み・保存（基本20万円） ---
 def get_allowance_settings(target_month):
-    """お小遣い設定シートから基本額と月別調整額を取得（シートがなければ自動作成）"""
     default_h, default_m = 200000, 200000
     try:
         try:
@@ -162,7 +179,7 @@ def get_allowance_settings(target_month):
         records = cfg_sheet.get_all_records()
         cfg_df = pd.DataFrame(records)
         if cfg_df.empty:
-            return default_h, default_m, default_h, default_m
+            return default_h, default_m
             
         base_row = cfg_df[cfg_df["対象月"] == "基本設定"]
         base_h = int(base_row["ハヤトお小遣い"].iloc[0]) if not base_row.empty else default_h
@@ -171,9 +188,9 @@ def get_allowance_settings(target_month):
         month_row = cfg_df[cfg_df["対象月"] == target_month]
         cur_h = int(month_row["ハヤトお小遣い"].iloc[0]) if not month_row.empty else base_h
         cur_m = int(month_row["マナお小遣い"].iloc[0]) if not month_row.empty else base_m
-        return cur_h, cur_m, base_h, base_m
+        return cur_h, cur_m
     except Exception:
-        return default_h, default_m, default_h, default_m
+        return default_h, default_m
 
 def save_allowance_setting(target_key, val_h, val_m):
     try:
@@ -196,7 +213,7 @@ def save_allowance_setting(target_key, val_h, val_m):
     except Exception as e:
         st.error(f"設定の保存に失敗しました: {e}")
 
-# --- 4. ユーティリティ関数（5日締め計算・店名整形・重複防止ID） ---
+# --- 4. ユーティリティ関数 ---
 def calc_billing_month(date_str):
     try:
         dt = pd.to_datetime(str(date_str), errors='coerce')
@@ -271,9 +288,9 @@ def smart_clean_merchant(raw_name):
 def format_short_member(member_str):
     m = str(member_str)
     if "現金(ハヤト" in m:
-        return "💴ハヤト立替"
+        return "💴ハヤト"
     elif "現金(マナ" in m:
-        return "💴マナ立替"
+        return "💴マナ"
     m_up = m.upper()
     if "HAYATO" in m_up:
         return "ハヤト"
@@ -282,7 +299,6 @@ def format_short_member(member_str):
     return m[:6] if m else "-"
 
 def normalize_date_str(date_str):
-    """日付表記の揺れ（2026/8/6 と 2026/08/06 など）を統一して重複判定を正確にする"""
     try:
         dt = pd.to_datetime(str(date_str), errors='coerce')
         if pd.isna(dt):
@@ -292,10 +308,6 @@ def normalize_date_str(date_str):
         return str(date_str).strip()
 
 def add_occurrence_key(target_df):
-    """
-    同じ日に同じ店で同じ金額を複数回使った場合は別明細として残し（#0, #1...）、
-    翌月のCSVと期間が被った場合は同じ枝番になるため100%正確に重複スキップできるキーを生成
-    """
     temp = target_df.copy()
     temp["_norm_date"] = temp["ご利用日"].apply(normalize_date_str)
     temp["_norm_amt"] = pd.to_numeric(temp["金額"], errors='coerce').fillna(0).astype(int).astype(str)
@@ -330,7 +342,7 @@ def clean_and_format_csv(file_obj):
     return new_df[keep_columns]
 
 def auto_sync_from_drive():
-    """バックグラウンドでGoogleドライブのCSVを自動検出し、未登録の明細だけを安全に追記する"""
+    """『🔄再読込』を押した時だけGoogleドライブのCSVをスキャンして未登録明細を追加する"""
     try:
         authed_session = AuthorizedSession(client.http_client.auth)
         query = "(mimeType = 'text/csv' or name contains '.csv') and trashed = false"
@@ -360,7 +372,6 @@ def auto_sync_from_drive():
             return 0
             
         merged_new = pd.concat(all_new_dfs, ignore_index=True)
-        # 複数CSV間で期間が被っている場合も、同じ枝番キー（_key）の重複を排除
         merged_new = merged_new.drop_duplicates(subset=["_key"], keep="first")
         
         cols_order = ["仕分け", "金額", "ご利用内容", "ご利用日", "カード会員様名"]
@@ -421,25 +432,19 @@ def save_changes_to_cloud(changes_dict, cols_order):
     except Exception:
         sheet.update('A1', data_to_write)
 
-# --- 5. 初回アクセス時・更新時のGoogleドライブ自動同期 ---
-if not st.session_state.drive_synced:
-    added_count = auto_sync_from_drive()
-    st.session_state.drive_synced = True
-    if added_count > 0:
-        st.toast(f"📂 Googleドライブから新しい明細を {added_count} 件自動追加しました！")
-
-# --- 6. データの読み込みと整備 ---
+# --- 5. データの読み込みと整備 ---
 existing_data = sheet.get_all_records()
 
 if not existing_data:
-    st.info(
-        "💡 まだ明細データがありません。\n\n"
-        "Googleドライブにフォルダを作って `amex-bot@amexapp.iam.gserviceaccount.com` に共有し、"
-        "その中にアメックスのCSVを入れると自動で読み込まれます！"
-    )
-    if st.button("🔄 ドライブを再チェックする", type="primary"):
-        st.session_state.drive_synced = False
-        st.rerun()
+    st.info("💡 まだ明細データがありません。下のボタンを押すとGoogleドライブ内のCSVを自動で読み込みます。")
+    if st.button("🔄 GoogleドライブからCSVを取り込む", type="primary"):
+        with st.spinner("Googleドライブ内のCSVを確認中..."):
+            added = auto_sync_from_drive()
+        if added > 0:
+            st.success(f"🎉 {added} 件の明細を取り込みました！")
+            st.rerun()
+        else:
+            st.warning("まだCSVが見つかりませんでした。共有フォルダにCSVを入れてからもう一度押してください。")
     st.stop()
 
 df = pd.DataFrame(existing_data)
@@ -463,21 +468,26 @@ if "日付不明" in df["請求月"].unique():
 billing_options = billing_months + ["すべて表示"]
 
 # --- 上部：請求月選択 ＆ 未分類スイッチ ＆ 原文表示スイッチ ＆ 再読込（ドライブ自動同期） ---
-c_top1, c_top2, c_top3, c_top4 = st.columns([3.8, 2.3, 2.1, 1.8])
-with c_top1:
-    selected_month = st.selectbox("📅 請求月", options=billing_options, index=0, label_visibility="collapsed")
-with c_top2:
-    only_unclassified = st.toggle("🔍未分類", value=False)
-with c_top3:
-    show_raw_text = st.toggle("📄原文", value=False)
-with c_top4:
-    if st.button("🔄再読込", use_container_width=True):
-        st.session_state.pending_changes.clear()
-        st.session_state.drive_synced = False
-        st.session_state.table_key += 1
-        st.rerun()
+with st.container():
+    st.markdown('<div class="nowrap-bar"></div>', unsafe_allow_html=True)
+    c_top1, c_top2, c_top3, c_top4 = st.columns([3.8, 2.2, 2.0, 2.0])
+    with c_top1:
+        selected_month = st.selectbox("📅 請求月", options=billing_options, index=0, label_visibility="collapsed")
+    with c_top2:
+        only_unclassified = st.toggle("🔍未分類", value=False)
+    with c_top3:
+        show_raw_text = st.toggle("📄原文", value=False)
+    with c_top4:
+        if st.button("🔄再読込", use_container_width=True):
+            with st.spinner("最新データ＆ドライブCSVを確認中..."):
+                added = auto_sync_from_drive()
+                st.session_state.pending_changes.clear()
+                st.session_state.table_key += 1
+            if added > 0:
+                st.toast(f"📂 ドライブから新規明細を {added} 件追加しました！")
+            st.rerun()
 
-# --- 7. メイン画面：4つのタブ ---
+# --- 6. メイン画面：4つのタブ ---
 tab1, tab2, tab3, tab4 = st.tabs(["⚡ 仕分け", "💴 現金立替", "🏦 月別精算", "📈 推移・年間合計"])
 
 # ================= タブ1：一覧チェックボックス ＆ 上部1列固定バー =================
@@ -508,7 +518,7 @@ with tab1:
 
     # ★ 画面上部に固定される超スリム1段ボタンバー
     with st.container():
-        st.markdown('<div class="fixed-action-bar"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="fixed-action-bar nowrap-bar"></div>', unsafe_allow_html=True)
         pending_count = len(st.session_state.pending_changes)
         save_label = f"☁️保存({pending_count})" if pending_count > 0 else "☁️保存"
 
@@ -546,7 +556,7 @@ with tab1:
                 st.toast("✅ クラウドに保存しました！")
                 st.rerun()
 
-    # --- 一覧表（利用日のすぐ右に金額を配置、PCでも広がりすぎない設計） ---
+    # --- 一覧表（PCでは画面幅いっぱいに全文表示、iPhoneでも日付・金額・店名の頭が収まる構成） ---
     if view_df.empty:
         st.success(f"🎉 {selected_month} の対象明細はすべて仕分け完了しています！")
     else:
@@ -577,19 +587,19 @@ with tab1:
         styled_table = disp_df.style.apply(style_rows, axis=1)
 
         col_cfg = {
-            "仕分け": st.column_config.TextColumn("仕分け", width=75),
-            "利用日": st.column_config.TextColumn("利用日", width=80),
-            "金額": st.column_config.NumberColumn("金額", format="¥%d", width=85),
-            "お店・内容": st.column_config.TextColumn("お店・内容", width=210),
-            "会員": st.column_config.TextColumn("会員", width=75),
+            "仕分け": st.column_config.TextColumn("仕分け", width="small"),
+            "利用日": st.column_config.TextColumn("利用日", width="small"),
+            "金額": st.column_config.NumberColumn("金額", format="¥%d", width="small"),
+            "お店・内容": st.column_config.TextColumn("お店・内容", width="large"),
+            "会員": st.column_config.TextColumn("会員", width="small"),
         }
         if show_raw_text:
-            col_cfg["📄原文"] = st.column_config.TextColumn("📄原文", width=260)
+            col_cfg["📄原文"] = st.column_config.TextColumn("📄原文", width="large")
 
         st.dataframe(
             styled_table,
             column_config=col_cfg,
-            use_container_width=False,
+            use_container_width=True,
             height=560,
             hide_index=True,
             on_select="rerun",
@@ -597,28 +607,32 @@ with tab1:
             key=f"interactive_table_{st.session_state.table_key}"
         )
 
-# ================= タブ2：現金立替の入力（5日締め連動） =================
+# ================= タブ2：現金立替の入力（スマホでも見やすいシンプル構成） =================
 with tab2:
-    st.subheader("💴 現金での立て替え払いを記録")
-    st.caption("個人の現金で支払った「共有の買い物」や「相手の買い物」を登録すると、毎月5日締めで自動的に月別精算（共用口座からの振込額）に反映されます。")
+    st.subheader("💴 現金の立て替えを記録")
 
     with st.form("cash_entry_form", clear_on_submit=True):
         f1, f2 = st.columns(2)
         with f1:
-            cash_date = st.date_input("📅 利用日（5日締め基準で自動分類）", value=datetime.date.today())
-            cash_payer = st.radio("👛 現金を出した人（立て替えた人）", options=["👩 マナ", "👨 ハヤト"], horizontal=True)
+            cash_date = st.date_input("📅 利用日", value=datetime.date.today())
         with f2:
             cash_amount = st.number_input("💴 金額（円）", min_value=1, step=100, value=1000)
-            cash_target = st.radio("🎯 何の支払い？（負担する人）", options=["👫 共有", "👨 ハヤト個人", "👩 マナ個人"], horizontal=True)
+
+        cash_desc = st.text_input("📝 内容", placeholder="例：ラーメン、駐車場、病院など")
+
+        p1, p2 = st.columns(2)
+        with p1:
+            cash_payer = st.radio("👛 払った人", options=["👩 マナ", "👨 ハヤト"], horizontal=True)
+        with p2:
+            cash_target = st.radio("🎯 誰の分？", options=["👫 共有", "👨 ハヤト", "👩 マナ"], horizontal=True)
         
-        cash_desc = st.text_input("📝 お店・内容（例：ラーメン、駐車場代、病院など）", placeholder="内容を入力してください")
-        submitted = st.form_submit_button("➕ この内容で現金立替を登録する", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("➕ 登録する", type="primary", use_container_width=True)
 
         if submitted:
             if not cash_desc.strip():
-                st.warning("⚠️ 「お店・内容」を入力してください。")
+                st.warning("⚠️ 「内容」を入力してください。")
             else:
-                target_map = {"👫 共有": "共有", "👨 ハヤト個人": "ハヤト", "👩 マナ個人": "マナ"}
+                target_map = {"👫 共有": "共有", "👨 ハヤト": "ハヤト", "👩 マナ": "マナ"}
                 payer_label = "💴現金(マナ立替)" if "マナ" in cash_payer else "💴現金(ハヤト立替)"
                 new_row_df = pd.DataFrame([{
                     "仕分け": target_map[cash_target],
@@ -643,129 +657,134 @@ with tab2:
                 st.success(f"✅ 現金立替（{cash_desc}：¥{int(cash_amount):,}）を登録しました！")
                 st.rerun()
 
-    # 登録済みの現金立替一覧
     cash_history_df = df[df["カード会員様名"].astype(str).str.contains("現金", na=False)].copy()
     if not cash_history_df.empty:
-        st.markdown("##### 📋 登録済みの現金立替履歴（※削除したい場合は「⚡仕分け」タブで『🚫外』にしてください）")
+        st.markdown("##### 📋 現金立替の履歴")
         show_cash = cash_history_df[["請求月", "利用日", "金額", "お店・内容", "会員", "仕分け"]].sort_index(ascending=False)
-        st.dataframe(show_cash.style.format({"金額": "¥{:,}"}), hide_index=True, use_container_width=False)
+        st.dataframe(show_cash.style.format({"金額": "¥{:,}"}), hide_index=True, use_container_width=True)
 
-# ================= タブ3：月別精算（3口座＆お小遣い全自動計算） =================
+# ================= タブ3：月別精算（総額照合バー ＋ シンプル振込カード） =================
 with tab3:
     target_m = selected_month if selected_month != "すべて表示" else (billing_months[0] if billing_months else "2026年09月請求")
-    st.subheader(f"🏦 {target_m} の最終精算（共用口座 ➡️ 個人口座）")
+    st.subheader(f"🏦 {target_m} の精算")
 
     month_df = df[df["請求月"] == target_m].copy()
     calc_df = month_df[month_df["仕分け"] != "集計外"].copy()
 
-    # お小遣い設定の取得（基本20万円）
-    allow_h, allow_m, base_h, base_m = get_allowance_settings(target_m)
+    allow_h, allow_m = get_allowance_settings(target_m)
 
-    # アメックス明細と現金立替を分離して集計
     is_cash = calc_df["カード会員様名"].astype(str).str.contains("現金", na=False)
     amex_df = calc_df[~is_cash]
     cash_df = calc_df[is_cash]
 
-    # 1. アメックスでの各項目合計
+    # ★ クレジット利用総額 ＆ 現金立替総額（請求書との一致確認用）
+    amex_total_all = int(amex_df["金額"].sum())
+    cash_total_all = int(cash_df["金額"].sum())
+
     amex_shared = int(amex_df[amex_df["仕分け"] == "共有"]["金額"].sum())
     amex_hayato = int(amex_df[amex_df["仕分け"] == "ハヤト"]["金額"].sum())
     amex_mana = int(amex_df[amex_df["仕分け"] == "マナ"]["金額"].sum())
     amex_unknown = int(amex_df[amex_df["仕分け"] == "不明(保留)"]["金額"].sum())
     unclassified_total = int(calc_df[calc_df["仕分け"] == "未分類"]["金額"].sum())
 
-    # 2. 現金立替の精算計算
-    # ハヤトが現金を出した立替総額 ＆ マナが現金を出した立替総額
     cash_paid_by_h = int(cash_df[cash_df["カード会員様名"].astype(str).str.contains("ハヤト", na=False)]["金額"].sum())
     cash_paid_by_m = int(cash_df[cash_df["カード会員様名"].astype(str).str.contains("マナ", na=False)]["金額"].sum())
 
-    # 現金立替のうち、ハヤト個人の負担分 ＆ マナ個人の負担分 ＆ 共有分
     cash_burden_h = int(cash_df[cash_df["仕分け"] == "ハヤト"]["金額"].sum())
     cash_burden_m = int(cash_df[cash_df["仕分け"] == "マナ"]["金額"].sum())
     cash_burden_shared = int(cash_df[cash_df["仕分け"] == "共有"]["金額"].sum())
 
-    # 現金立替によるネット加減算額（自分が立て替えた分 － 現金での自分負担分）
     cash_net_h = cash_paid_by_h - cash_burden_h
     cash_net_m = cash_paid_by_m - cash_burden_m
 
-    # ★ 最終結論：共用口座から各個人口座へ振り込む金額
     transfer_to_hayato = allow_h - amex_hayato + cash_net_h
     transfer_to_mana = allow_m - amex_mana + cash_net_m
 
     if unclassified_total > 0:
-        st.warning(f"⚠️ 未分類の明細が **¥ {unclassified_total:,}** 残っています（すべて仕分けると正確な振込額が確定します）")
+        st.warning(f"⚠️ 未分類が **¥ {unclassified_total:,}** 残っています")
     else:
-        st.success("✨ この月の仕分けはすべて完了し、振込額が確定しています！")
+        st.success("✨ 今月の仕分けはすべて完了しています！")
 
-    # 最終振込額の大型カード表示
+    # 1. 最上部：クレジット総額 ＆ 現金総額の照合ボックス
+    t_col1, t_col2 = st.columns(2)
+    with t_col1:
+        st.markdown(
+            f'<div class="total-check-box">'
+            f'<div class="total-check-label">💳 クレジット利用 総額（請求書照合用）</div>'
+            f'<div class="total-check-val">¥ {amex_total_all:,}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    with t_col2:
+        st.markdown(
+            f'<div class="total-check-box">'
+            f'<div class="total-check-label">💴 現金立替 総額</div>'
+            f'<div class="total-check-val">¥ {cash_total_all:,}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # 2. 真ん中：最終振込額カード（シンプル1行内訳）
     col_res1, col_res2 = st.columns(2)
     with col_res1:
-        action_h = f"共用口座 ➡️ ハヤト口座へ振込" if transfer_to_hayato >= 0 else "⚠️ ハヤト口座 ➡️ 共用口座へ入金"
+        action_h = "共用口座 ➡️ ハヤト口座へ振込" if transfer_to_hayato >= 0 else "⚠️ ハヤト口座 ➡️ 共用口座へ入金"
+        sign_h = "＋" if cash_net_h >= 0 else "－"
         st.markdown(
             f'<div class="settlement-card">'
             f'<div class="settlement-name">👨 {action_h}</div>'
             f'<div class="settlement-amount">¥ {abs(transfer_to_hayato):,}</div>'
             f'<div class="settlement-detail">'
-            f'・今月のお小遣い枠: ¥ {allow_h:,}<br>'
-            f'・AMEX個人利用: － ¥ {amex_hayato:,}<br>'
-            f'・現金立替精算: {"＋" if cash_net_h >= 0 else "－"} ¥ {abs(cash_net_h):,} '
-            f'<span style="font-size:11px; color:#aaa;">(立替出金 ¥{cash_paid_by_h:,} / 現金自己負担 ¥{cash_burden_h:,})</span>'
+            f'お小遣い ¥{allow_h:,} － クレカ個人 ¥{amex_hayato:,} {sign_h} 現金精算 ¥{abs(cash_net_h):,}'
             f'</div></div>',
             unsafe_allow_html=True
         )
     with col_res2:
-        action_m = f"共用口座 ➡️ マナ口座へ振込" if transfer_to_mana >= 0 else "⚠️ マナ口座 ➡️ 共用口座へ入金"
+        action_m = "共用口座 ➡️ マナ口座へ振込" if transfer_to_mana >= 0 else "⚠️ マナ口座 ➡️ 共用口座へ入金"
+        sign_m = "＋" if cash_net_m >= 0 else "－"
         st.markdown(
             f'<div class="settlement-card">'
             f'<div class="settlement-name">👩 {action_m}</div>'
             f'<div class="settlement-amount">¥ {abs(transfer_to_mana):,}</div>'
             f'<div class="settlement-detail">'
-            f'・今月のお小遣い枠: ¥ {allow_m:,}<br>'
-            f'・AMEX個人利用: － ¥ {amex_mana:,}<br>'
-            f'・現金立替精算: {"＋" if cash_net_m >= 0 else "－"} ¥ {abs(cash_net_m):,} '
-            f'<span style="font-size:11px; color:#aaa;">(立替出金 ¥{cash_paid_by_m:,} / 現金自己負担 ¥{cash_burden_m:,})</span>'
+            f'お小遣い ¥{allow_m:,} － クレカ個人 ¥{amex_mana:,} {sign_m} 現金精算 ¥{abs(cash_net_m):,}'
             f'</div></div>',
             unsafe_allow_html=True
         )
 
-    # お小遣い額の調整パネル（折りたたみ）
-    with st.expander("⚙️ 月のお小遣い額の調整（基本設定：20万円）", expanded=False):
-        st.caption("普段は変更不要です。特定の月だけ金額を調整したい場合や、基本額を変更したい場合に保存してください。")
-        a_col1, a_col2, a_col3 = st.columns([3, 3, 4])
+    # 3. 下部：項目別内訳とお小遣い設定（すっきり整理）
+    with st.expander("📊 詳しい内訳（共有・個人・保留）を見る", expanded=True):
+        m1, m2 = st.columns(2)
+        m1.metric("👫 共有 合計", f"¥ {amex_shared + cash_burden_shared:,}", f"クレカ ¥{amex_shared:,} / 現金 ¥{cash_burden_shared:,}")
+        m2.metric("❓ 不明(保留)", f"¥ {amex_unknown:,}")
+        
+        m3, m4 = st.columns(2)
+        m3.metric("👨 ハヤト個人 合計", f"¥ {amex_hayato + cash_burden_h:,}", f"クレカ ¥{amex_hayato:,} / 現金 ¥{cash_burden_h:,}")
+        m4.metric("👩 マナ個人 合計", f"¥ {amex_mana + cash_burden_m:,}", f"クレカ ¥{amex_mana:,} / 現金 ¥{cash_burden_m:,}")
+
+    with st.expander("⚙️ お小遣い額の調整（基本：20万円）", expanded=False):
+        a_col1, a_col2 = st.columns(2)
         with a_col1:
             new_allow_h = st.number_input("👨 ハヤトお小遣い", value=allow_h, step=10000)
         with a_col2:
             new_allow_m = st.number_input("👩 マナお小遣い", value=allow_m, step=10000)
-        with a_col3:
-            save_scope = st.radio("反映範囲", options=[f"{target_m}のみ変更", "今後の基本設定として変更"], horizontal=True)
-            if st.button("💾 お小遣い設定を保存", type="primary", use_container_width=True):
-                key_to_save = target_m if "のみ" in save_scope else "基本設定"
-                save_allowance_setting(key_to_save, int(new_allow_h), int(new_allow_m))
-                st.success("✅ お小遣い設定を更新しました！")
-                st.rerun()
-
-    st.markdown("---")
-    st.markdown("##### 📊 支出の内訳（AMEX ＋ 現金）")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("👫 共有支出 合計", f"¥ {amex_shared + cash_burden_shared:,}", f"内 現金立替 ¥{cash_burden_shared:,}")
-    m2.metric("👨 ハヤト支出 合計", f"¥ {amex_hayato + cash_burden_h:,}", f"お小遣い残 ¥{allow_h - (amex_hayato + cash_burden_h):,}")
-    m3.metric("👩 マナ支出 合計", f"¥ {amex_mana + cash_burden_m:,}", f"お小遣い残 ¥{allow_m - (amex_mana + cash_burden_m):,}")
-    m4.metric("❓ 不明(保留)", f"¥ {amex_unknown:,}")
+        save_scope = st.radio("反映範囲", options=[f"{target_m}のみ変更", "今後の基本設定として変更"], horizontal=True)
+        if st.button("💾 設定を保存", type="primary", use_container_width=True):
+            key_to_save = target_m if "のみ" in save_scope else "基本設定"
+            save_allowance_setting(key_to_save, int(new_allow_h), int(new_allow_m))
+            st.success("✅ 保存しました！")
+            st.rerun()
 
 # ================= タブ4：月次推移 ＆ 年度別一覧表（年間合計つき） =================
 with tab4:
-    st.subheader("📈 月ごとの金額推移（5日締め基準）")
+    st.subheader("📈 月ごとの金額推移")
     
     trend_df = df[(df["仕分け"] != "集計外") & (df["請求月"] != "日付不明")].copy()
     if not trend_df.empty:
-        # 請求月から「年度（年）」を抽出（例: "2026年09月請求" -> "2026年"）
         trend_df["対象年"] = trend_df["請求月"].str.extract(r'^(\d{4}年)')[0].fillna("その他")
         available_years = sorted(trend_df["対象年"].unique().tolist(), reverse=True)
         year_options = available_years + ["すべての年"]
 
-        y_col1, y_col2 = st.columns([4, 6])
-        with y_col1:
-            selected_year = st.selectbox("📅 表示する年を選択", options=year_options, index=0)
-
+        selected_year = st.selectbox("📅 表示する年を選択", options=year_options, index=0)
         filtered_trend_df = trend_df[trend_df["対象年"] == selected_year].copy() if selected_year != "すべての年" else trend_df.copy()
 
         monthly_summary = filtered_trend_df.groupby(["請求月", "仕分け"])["金額"].sum().reset_index()
@@ -789,27 +808,26 @@ with tab4:
         fig_bar.update_layout(xaxis_title="", yaxis_title="金額 (円)", margin=dict(t=10, b=10, l=0, r=0), height=320, legend_title_text="")
         st.plotly_chart(fig_bar, use_container_width=True)
         
-        st.markdown(f"##### 📋 {selected_year} の月別・項目別一覧表（年間合計つき）")
+        st.markdown(f"##### 📋 {selected_year} の月別・項目別一覧表")
         pivot_df = monthly_summary.pivot(index="請求月", columns="仕分け", values="金額").fillna(0).astype(int)
         
-        # 列の並び順を整える
         ordered_cats = [c for c in ["共有", "ハヤト", "マナ", "不明(保留)", "未分類"] if c in pivot_df.columns]
         pivot_df = pivot_df[ordered_cats]
         pivot_df["月間合計"] = pivot_df.sum(axis=1)
         pivot_df = pivot_df.sort_index(ascending=False)
 
-        # ★ 最下部に「年間合計」の行を追加
         yearly_totals = pivot_df.sum(axis=0)
         pivot_with_total = pivot_df.copy()
         pivot_with_total.loc[f"🏆 {selected_year} 合計"] = yearly_totals
 
-        # 年間合計のサマリーカードも上に表示
-        ym1, ym2, ym3, ym4 = st.columns(4)
+        ym1, ym2 = st.columns(2)
         ym1.metric(f"🏆 {selected_year} 総合計", f"¥ {int(yearly_totals.get('月間合計', 0)):,}")
         ym2.metric("👫 共有 年間合計", f"¥ {int(yearly_totals.get('共有', 0)):,}")
+        
+        ym3, ym4 = st.columns(2)
         ym3.metric("👨 ハヤト 年間合計", f"¥ {int(yearly_totals.get('ハヤト', 0)):,}")
         ym4.metric("👩 マナ 年間合計", f"¥ {int(yearly_totals.get('マナ', 0)):,}")
 
-        st.dataframe(pivot_with_total.style.format("¥{:,}"), use_container_width=False)
+        st.dataframe(pivot_with_total.style.format("¥{:,}"), use_container_width=True)
     else:
         st.info("推移を表示できるデータがまだありません。")

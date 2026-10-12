@@ -3,60 +3,58 @@ import pandas as pd
 import plotly.express as px
 import gspread
 from google.auth.transport.requests import AuthorizedSession
-import urllib.parse
 import re
 import io
 import traceback
 
-# --- 0. ページ設定＆デザイン（PCタイプの横並び画面をiPhoneでも強制維持） ---
+# --- 0. ページ設定＆デザイン（タイトルだけ黒×金、上部は超スリム1段固定） ---
 st.set_page_config(layout="wide", page_title="THE SETTLEMENT | AMEX", page_icon="💳")
 
 st.markdown("""
 <style>
-/* タイトルバナーだけ高級感のある黒×金 */
+/* タイトルバナーのみ黒×金のラグジュアリー仕様 */
 .luxury-banner {
     background: linear-gradient(135deg, #0a0a0a 0%, #1c1c1c 50%, #050505 100%);
     border: 1px solid #d4af37;
     border-radius: 8px;
-    padding: 10px 10px;
+    padding: 8px 10px;
     text-align: center;
-    margin-bottom: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    margin-bottom: 6px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
 }
 .luxury-title {
     color: #d4af37;
     font-family: 'Georgia', 'Times New Roman', serif;
-    font-size: 19px;
+    font-size: 18px;
     font-weight: bold;
     letter-spacing: 3px;
     margin: 0;
 }
 .luxury-subtitle {
     color: #b89f5d;
-    font-size: 9px;
+    font-size: 8px;
     letter-spacing: 1.5px;
-    margin-top: 2px;
+    margin-top: 1px;
 }
 
-/* ★ 操作ボタンパネルを画面上部にピタッと固定 */
+/* ★ 超スリム1段の操作バーを画面上部にピタッと固定 */
 div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
     position: sticky;
-    top: 2.8rem;
+    top: 2.6rem;
     z-index: 999;
     background-color: var(--background-color, #ffffff);
-    padding: 8px 10px;
-    border: 2px solid #d4af37;
-    border-radius: 10px;
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
-    margin-bottom: 10px;
+    padding: 6px 8px;
+    border-bottom: 2px solid #d4af37;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+    margin-bottom: 6px;
 }
 
-/* ★ iPhone（スマホ）でも縦1列に崩さず、PCと全く同じ「横並び」を強制維持する設定 */
+/* スマホでもボタンが縦に崩れず横1列を維持する設定 */
 div[data-testid="stHorizontalBlock"] {
     display: flex !important;
     flex-direction: row !important;
     flex-wrap: nowrap !important;
-    gap: 0.3rem !important;
+    gap: 0.25rem !important;
     align-items: center !important;
 }
 div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
@@ -66,51 +64,25 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
     flex: 1 1 0% !important;
 }
 
-/* 選択中の明細プレビューボックス */
-.target-box {
-    background-color: #fff9db;
-    border-left: 5px solid #f59f00;
-    padding: 6px 10px;
-    border-radius: 6px;
-    margin-bottom: 6px;
-    color: #1a1a1a;
-}
-.target-main {
-    font-size: 15px;
-    font-weight: bold;
-    color: #111111;
-}
-.target-raw {
-    font-size: 11px;
-    color: #666666;
-    margin-top: 2px;
-}
-
-/* スマホ画面で開いた時だけ、PCレイアウトのまま綺麗に収まるよう余白と文字サイズを最適化 */
-@media (max-width: 768px) {
+/* スマホ（横画面・縦画面）での余白とボタンサイズの最適化 */
+@media (max-width: 900px) {
     .block-container {
         padding-left: 0.4rem !important;
         padding-right: 0.4rem !important;
-        padding-top: 1.2rem !important;
+        padding-top: 1rem !important;
     }
     div[data-testid="stVerticalBlock"] > div:has(div.fixed-action-bar) {
-        top: 2.2rem !important;
-        padding: 6px 6px !important;
+        top: 2.0rem !important;
+        padding: 4px 4px !important;
     }
     div[data-testid="stButton"] button {
-        padding: 0.2rem 0.1rem !important;
-        min-height: 2.1rem !important;
+        padding: 0.15rem 0.1rem !important;
+        min-height: 2.0rem !important;
     }
     div[data-testid="stButton"] button p {
-        font-size: 10.5px !important;
+        font-size: 11px !important;
         line-height: 1.1 !important;
         white-space: nowrap !important;
-    }
-    .target-main {
-        font-size: 12.5px !important;
-    }
-    .target-raw {
-        font-size: 10px !important;
     }
 }
 </style>
@@ -123,12 +95,6 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
 # --- 1. セッション状態の初期化 ---
 if "pending_changes" not in st.session_state:
     st.session_state.pending_changes = {}
-if "history_stack" not in st.session_state:
-    st.session_state.history_stack = []
-if "cursor_idx" not in st.session_state:
-    st.session_state.cursor_idx = None
-if "selected_indices" not in st.session_state:
-    st.session_state.selected_indices = []
 if "table_key" not in st.session_state:
     st.session_state.table_key = 0
 
@@ -184,21 +150,21 @@ def smart_clean_merchant(raw_name):
     known_rules = [
         ("AMAZON", "📦 Amazon"),
         ("ｱﾏｿﾞﾝ", "📦 Amazon"),
-        ("APPLE.COM", "🍎 Apple (課金/サブスク)"),
-        ("APPLE COM BILL", "🍎 Apple (課金/サブスク)"),
+        ("APPLE.COM", "🍎 Apple"),
+        ("APPLE COM BILL", "🍎 Apple"),
         ("UBER *EATS", "🍔 Uber Eats"),
         ("UBER EATS", "🍔 Uber Eats"),
-        ("ｽﾀｰﾊﾞｯｸｽ", "☕ スターバックス"),
-        ("STARBUCKS", "☕ スターバックス"),
-        ("ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ", "🏪 セブンイレブン"),
-        ("ﾌｧﾐﾘｰﾏｰﾄ", "🏪 ファミリーマート"),
+        ("ｽﾀｰﾊﾞｯｸｽ", "☕ スタバ"),
+        ("STARBUCKS", "☕ スタバ"),
+        ("ｾﾌﾞﾝ-ｲﾚﾌﾞﾝ", "🏪 セブン"),
+        ("ﾌｧﾐﾘｰﾏｰﾄ", "🏪 ファミマ"),
         ("ﾛｰｿﾝ", "🏪 ローソン"),
-        ("ﾓﾊﾞｲﾙﾊﾟｽﾓ", "🚃 モバイルPASMO"),
+        ("ﾓﾊﾞｲﾙﾊﾟｽﾓ", "🚃 PASMO"),
         ("ﾊﾟｽﾓ", "🚃 PASMO"),
-        ("ﾓﾊﾞｲﾙｽｲｶ", "🚃 モバイルSuica"),
+        ("ﾓﾊﾞｲﾙｽｲｶ", "🚃 Suica"),
         ("SUICA", "🚃 Suica"),
         ("タクシー", "🚕 タクシー"),
-        ("GO ", "🚕 タクシー(GO)"),
+        ("GO ", "🚕 GOタクシー"),
         ("エネオス", "⛽ ENEOS"),
         ("ＥＮＥＯＳ", "⛽ ENEOS"),
     ]
@@ -223,10 +189,10 @@ def smart_clean_merchant(raw_name):
 def format_short_member(member_str):
     m = str(member_str).upper()
     if "HAYATO" in m:
-        return "👨 ハヤト"
+        return "ハヤト"
     elif "MANA" in m:
-        return "👩 マナ"
-    return str(member_str)[:8] if member_str else "-"
+        return "マナ"
+    return str(member_str)[:6] if member_str else "-"
 
 def clean_and_format_csv(file_obj):
     try:
@@ -348,31 +314,31 @@ else:
 
     df["金額"] = pd.to_numeric(df["金額"], errors='coerce').fillna(0).astype(int)
     df["請求月"] = df["ご利用日"].apply(calc_billing_month)
-    df["スッキリ店名"] = df["ご利用内容"].apply(smart_clean_merchant)
-    df["曜日付日付"] = df["ご利用日"].apply(format_short_date)
-    df["会員短縮"] = df["カード会員様名"].apply(format_short_member)
+    df["お店・内容"] = df["ご利用内容"].apply(smart_clean_merchant)
+    df["利用日"] = df["ご利用日"].apply(format_short_date)
+    df["会員"] = df["カード会員様名"].apply(format_short_member)
     
     billing_months = sorted([m for m in df["請求月"].unique() if m != "日付不明"], reverse=True)
     if "日付不明" in df["請求月"].unique():
         billing_months.append("日付不明")
     billing_options = billing_months + ["すべて表示"]
 
-    # 上部：月選択 ＆ 未分類フィルター（ここも横1列を維持）
+    # 上部：月選択 ＆ 未分類フィルター（横1列でコンパクトに配置）
     c_top1, c_top2, c_top3 = st.columns([4.5, 3.5, 2])
     with c_top1:
         selected_month = st.selectbox("📅 請求月", options=billing_options, index=0, label_visibility="collapsed")
     with c_top2:
         only_unclassified = st.toggle("🔍未分類のみ", value=False)
     with c_top3:
-        if st.button("🔄 更新", use_container_width=True):
+        if st.button("🔄 再読込", use_container_width=True):
             st.session_state.pending_changes.clear()
-            st.session_state.selected_indices = []
+            st.session_state.table_key += 1
             st.rerun()
 
     # --- 5. メイン画面：3つのタブ ---
-    tab1, tab2, tab3 = st.tabs(["⚡ 一覧＆ボタン仕分け", "📊 月別精算", "📈 推移・ドライブ連携"])
+    tab1, tab2, tab3 = st.tabs(["⚡ 仕分け", "📊 月別精算", "📈 推移・連携"])
 
-    # ================= タブ1：一覧ハイライト ＆ 固定ワンタップボタン =================
+    # ================= タブ1：チェックボックス選択 ＆ 上部1列固定バー =================
     with tab1:
         if selected_month != "すべて表示":
             month_df = df[df["請求月"] == selected_month].copy()
@@ -381,225 +347,113 @@ else:
 
         view_df = month_df[month_df["仕分け"] == "未分類"].copy() if only_unclassified else month_df.copy()
         view_indices = list(view_df.index)
-        unclassified_indices = list(view_df[view_df["仕分け"] == "未分類"].index)
 
-        valid_selected = [i for i in st.session_state.selected_indices if i in view_indices]
-        if not valid_selected:
-            if st.session_state.cursor_idx in view_indices:
-                valid_selected = [st.session_state.cursor_idx]
-            elif unclassified_indices:
-                valid_selected = [unclassified_indices[0]]
-            elif view_indices:
-                valid_selected = [view_indices[0]]
-        st.session_state.selected_indices = valid_selected
-        if valid_selected:
-            st.session_state.cursor_idx = valid_selected[0]
+        # 現在チェックボックスで選択されている行を取得
+        current_table_state = st.session_state.get(f"interactive_table_{st.session_state.table_key}", {})
+        selected_row_positions = current_table_state.get("selection", {}).get("rows", [])
+        checked_indices = [view_indices[pos] for pos in selected_row_positions if pos < len(view_indices)]
 
-        # ★ 画面上部にピタッと固定される操作パネル（PC・iPhone共通の横並びレイアウト）
+        def apply_category(cat_name):
+            targets = checked_indices
+            # もしチェックを1つも入れずにボタンを押した場合は、一番上の「未分類」の行を自動で対象にする
+            if not targets:
+                unclass_list = list(view_df[view_df["仕分け"] == "未分類"].index)
+                if unclass_list:
+                    targets = [unclass_list[0]]
+            if not targets:
+                return
+            for i in targets:
+                st.session_state.pending_changes[i] = cat_name
+            # 変更後、チェックボックスを自動クリアして次を選びやすくする
+            st.session_state.table_key += 1
+
+        # ★ 画面上部に固定される超スリム1段ボタンバー
         with st.container():
             st.markdown('<div class="fixed-action-bar"></div>', unsafe_allow_html=True)
-            
-            if valid_selected:
-                first_row = df.loc[valid_selected[0]]
-                if len(valid_selected) == 1:
-                    raw_text = str(first_row.get("ご利用内容", ""))
-                    search_url = f"https://www.google.com/search?q={urllib.parse.quote(raw_text)}"
-                    st.markdown(
-                        f'<div class="target-box">'
-                        f'<div class="target-main">🎯 選択中: {first_row["曜日付日付"]} ｜ {first_row["スッキリ店名"]} ｜ ¥ {first_row["金額"]:,} <span style="font-size:11px; font-weight:normal;">({first_row["会員短縮"]} / 現在: {first_row["仕分け"]})</span></div>'
-                        f'<div class="target-raw">📄 請求書原文: {raw_text} &nbsp; <a href="{search_url}" target="_blank" style="color:#b8860b;">🔍 Google検索</a></div>'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-                else:
-                    total_sel_amt = df.loc[valid_selected, "金額"].sum()
-                    names_preview = "、".join(df.loc[valid_selected[:3], "スッキリ店名"].tolist())
-                    if len(valid_selected) > 3:
-                        names_preview += f" ほか{len(valid_selected)-3}件"
-                    raw_list = " / ".join(df.loc[valid_selected[:3], "ご利用内容"].astype(str).tolist())
-                    st.markdown(
-                        f'<div class="target-box">'
-                        f'<div class="target-main">🎯 {len(valid_selected)}件 選択中 （合計 ¥ {total_sel_amt:,}）: {names_preview}</div>'
-                        f'<div class="target-raw">📄 請求書原文: {raw_list}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
+            pending_count = len(st.session_state.pending_changes)
+            save_label = f"☁️保存({pending_count})" if pending_count > 0 else "☁️保存"
 
-            def apply_category(cat_name):
-                if not st.session_state.selected_indices:
-                    return
-                last_selected = st.session_state.selected_indices[-1]
-                prev_state = {i: df.loc[i, "仕分け"] for i in st.session_state.selected_indices}
-                st.session_state.history_stack.append((list(st.session_state.selected_indices), prev_state))
-                
-                for i in st.session_state.selected_indices:
-                    st.session_state.pending_changes[i] = cat_name
-                
-                remaining_unclass = [
-                    i for i in view_indices 
-                    if i not in st.session_state.selected_indices 
-                    and (st.session_state.pending_changes.get(i, df.loc[i, "仕分け"]) == "未分類")
-                ]
-                after_current = [i for i in remaining_unclass if i > last_selected]
-                if after_current:
-                    next_idx = after_current[0]
-                elif remaining_unclass:
-                    next_idx = remaining_unclass[0]
-                else:
-                    pos = view_indices.index(last_selected) if last_selected in view_indices else 0
-                    next_idx = view_indices[min(pos + 1, len(view_indices) - 1)]
-                
-                st.session_state.cursor_idx = next_idx
-                st.session_state.selected_indices = [next_idx]
-                st.session_state.table_key += 1
-
-            # 1段目：ワンタップ仕分けボタン（PCでもiPhoneでも横1列）
-            b1, b2, b3, b4, b5, b6 = st.columns([1.8, 1.8, 1.8, 1.4, 1.5, 1.4])
+            b1, b2, b3, b4, b5, b6, b7 = st.columns([1.5, 1.5, 1.5, 1.2, 1.2, 1.2, 1.9])
             with b1:
-                if st.button("👫 共有", type="primary", use_container_width=True):
+                if st.button("👫共有", type="primary", use_container_width=True):
                     apply_category("共有")
                     st.rerun()
             with b2:
-                if st.button("👨 ハヤト", type="primary", use_container_width=True):
+                if st.button("👨ハヤト", type="primary", use_container_width=True):
                     apply_category("ハヤト")
                     st.rerun()
             with b3:
-                if st.button("👩 マナ", type="primary", use_container_width=True):
+                if st.button("👩マナ", type="primary", use_container_width=True):
                     apply_category("マナ")
                     st.rerun()
             with b4:
-                if st.button("❓ 保留", use_container_width=True):
+                if st.button("❓保留", use_container_width=True):
                     apply_category("不明(保留)")
                     st.rerun()
             with b5:
-                if st.button("🚫 集計外", use_container_width=True):
+                if st.button("🚫外", use_container_width=True):
                     apply_category("集計外")
                     st.rerun()
             with b6:
-                if st.button("⬅️ 戻る", use_container_width=True, disabled=(len(st.session_state.history_stack) == 0)):
-                    indices_to_restore, prev_map = st.session_state.history_stack.pop()
-                    for i, old_cat in prev_map.items():
-                        st.session_state.pending_changes[i] = "🔄 未分類に戻す" if old_cat == "未分類" else old_cat
-                    st.session_state.selected_indices = indices_to_restore
-                    st.session_state.cursor_idx = indices_to_restore[0]
-                    st.session_state.table_key += 1
+                if st.button("🔄未分類", use_container_width=True):
+                    apply_category("🔄 未分類に戻す")
                     st.rerun()
-
-            # 2段目：選択範囲を広げる・移動する調整ボタン（PCでもiPhoneでも横1列）
-            r1, r2, r3, r4, r5, r6 = st.columns([1.5, 1.5, 2.0, 2.0, 1.4, 1.6])
-            with r1:
-                if st.button("➕ 下(+1)", use_container_width=True):
-                    if valid_selected:
-                        last_i = valid_selected[-1]
-                        pos = view_indices.index(last_i)
-                        if pos + 1 < len(view_indices):
-                            st.session_state.selected_indices.append(view_indices[pos + 1])
-                            st.session_state.table_key += 1
-                            st.rerun()
-            with r2:
-                if st.button("➕ 下(+5)", use_container_width=True):
-                    if valid_selected:
-                        last_i = valid_selected[-1]
-                        pos = view_indices.index(last_i)
-                        extra = view_indices[pos + 1 : pos + 6]
-                        for x in extra:
-                            if x not in st.session_state.selected_indices:
-                                st.session_state.selected_indices.append(x)
-                        st.session_state.table_key += 1
-                        st.rerun()
-            with r3:
-                if st.button("📅 同日全選択", use_container_width=True, disabled=not valid_selected):
-                    raw_d = df.loc[valid_selected[0], "ご利用日"]
-                    same_day_idx = list(view_df[view_df["ご利用日"] == raw_d].index)
-                    st.session_state.selected_indices = same_day_idx
-                    st.session_state.table_key += 1
-                    st.rerun()
-            with r4:
-                if st.button("🏪 同店全選択", use_container_width=True, disabled=not valid_selected):
-                    clean_s = df.loc[valid_selected[0], "スッキリ店名"]
-                    same_store_idx = list(view_df[view_df["スッキリ店名"] == clean_s].index)
-                    st.session_state.selected_indices = same_store_idx
-                    st.session_state.table_key += 1
-                    st.rerun()
-            with r5:
-                if st.button("⬇️ 次へ", use_container_width=True, disabled=not valid_selected):
-                    last_i = valid_selected[-1]
-                    pos = view_indices.index(last_i)
-                    next_i = view_indices[(pos + 1) % len(view_indices)]
-                    st.session_state.cursor_idx = next_i
-                    st.session_state.selected_indices = [next_i]
-                    st.session_state.table_key += 1
-                    st.rerun()
-            with r6:
-                if len(valid_selected) > 1:
-                    if st.button("✖️ 1行へ", use_container_width=True):
-                        st.session_state.selected_indices = [valid_selected[0]]
-                        st.session_state.table_key += 1
-                        st.rerun()
-                else:
-                    if st.button("🔄 未分類へ", use_container_width=True, disabled=not valid_selected):
-                        apply_category("🔄 未分類に戻す")
-                        st.rerun()
-
-            pending_count = len(st.session_state.pending_changes)
-            if pending_count > 0:
-                if st.button(f"☁️ 現在 {pending_count} 件の変更あり！ここを押してクラウドに一括保存する", type="primary", use_container_width=True):
-                    with st.spinner("クラウドの最新データと合体して保存中..."):
+            with b7:
+                if st.button(save_label, type="primary" if pending_count > 0 else "secondary", use_container_width=True, disabled=(pending_count == 0)):
+                    with st.spinner("保存中..."):
                         save_changes_to_cloud(st.session_state.pending_changes, cols)
                         st.session_state.pending_changes.clear()
-                        st.session_state.history_stack.clear()
-                    st.success("✅ クラウドへの保存が完了しました！")
+                        st.session_state.table_key += 1
+                    st.toast("✅ クラウドに保存しました！")
                     st.rerun()
 
-        # --- 一覧表 ---
+        # --- 一覧表（右端に極小の「📄原文」列を配置） ---
         if view_df.empty:
             st.success(f"🎉 {selected_month} の対象明細はすべて仕分け完了しています！")
         else:
             disp_df = pd.DataFrame(index=view_df.index)
-            disp_df["状態"] = [
-                f"👉 🎯 選択中 ({view_df.loc[i, '仕分け']})" if i in valid_selected else view_df.loc[i, "仕分け"]
-                for i in view_df.index
-            ]
-            disp_df["利用日"] = view_df["曜日付日付"]
-            disp_df["お店・内容（スッキリ）"] = view_df["スッキリ店名"]
+            disp_df["仕分け"] = view_df["仕分け"]
+            disp_df["利用日"] = view_df["利用日"]
+            disp_df["お店・内容"] = view_df["お店・内容"]
             disp_df["金額"] = view_df["金額"]
-            disp_df["会員"] = view_df["会員短縮"]
-            disp_df["請求書原文（正式データ）"] = view_df["ご利用内容"]
+            disp_df["会員"] = view_df["会員"]
+            disp_df["📄原文"] = view_df["ご利用内容"]
 
-            def highlight_rows(row):
+            def style_rows(row):
                 idx = row.name
-                if idx in valid_selected:
-                    return ['background-color: #fff3bf; color: #000000; font-weight: bold; border-top: 2px solid #f59f00; border-bottom: 2px solid #f59f00;'] * len(row)
-                
                 cat = view_df.loc[idx, "仕分け"]
                 if cat == "共有":
-                    return ['background-color: #fdfaf0; color: #5c4d1c;'] * len(row)
+                    return ['background-color: #fdfaf0; color: #5c4d1c; font-weight: 600;'] * len(row)
                 elif cat == "ハヤト":
-                    return ['background-color: #f0f7ff; color: #1c4587;'] * len(row)
+                    return ['background-color: #f0f7ff; color: #1c4587; font-weight: 600;'] * len(row)
                 elif cat == "マナ":
-                    return ['background-color: #fff0f3; color: #85203b;'] * len(row)
+                    return ['background-color: #fff0f3; color: #85203b; font-weight: 600;'] * len(row)
+                elif cat == "不明(保留)":
+                    return ['background-color: #fff9db; color: #8a6d3b;'] * len(row)
                 elif cat == "集計外":
                     return ['color: #aaaaaa;'] * len(row)
                 return [''] * len(row)
 
-            styled_table = disp_df.style.apply(highlight_rows, axis=1).format({"金額": "¥{:,.0f}"})
+            styled_table = disp_df.style.apply(style_rows, axis=1)
 
-            event = st.dataframe(
+            st.dataframe(
                 styled_table,
+                column_config={
+                    "仕分け": st.column_config.TextColumn("仕分け", width="small"),
+                    "利用日": st.column_config.TextColumn("利用日", width="small"),
+                    "お店・内容": st.column_config.TextColumn("お店・内容", width="medium"),
+                    "金額": st.column_config.NumberColumn("金額", format="¥%d", width="small"),
+                    "会員": st.column_config.TextColumn("会員", width="small"),
+                    # ★ 一番右端に小さく縮めて配置（ダブルタップで全文がポップアップ展開）
+                    "📄原文": st.column_config.TextColumn("📄原文", width="small"),
+                },
                 use_container_width=True,
-                height=520,
+                height=560,
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="multi-row",
                 key=f"interactive_table_{st.session_state.table_key}"
             )
-
-            if event and event.selection and event.selection.rows:
-                clicked_indices = [view_indices[pos] for pos in event.selection.rows if pos < len(view_indices)]
-                if clicked_indices and clicked_indices != st.session_state.selected_indices:
-                    st.session_state.selected_indices = clicked_indices
-                    st.session_state.cursor_idx = clicked_indices[0]
-                    st.rerun()
 
     # ================= タブ2：月別精算 =================
     with tab2:

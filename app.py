@@ -50,7 +50,7 @@ div[data-testid="stVerticalBlock"]:has(div.fixed-action-bar):not(:has(div[data-t
     margin-bottom: 6px;
 }
 
-/* ★ スマホでも「最上部の月選択バー」と「仕分けボタンバー」だけは横1列を維持（他タブは自然に縦並びへ） */
+/* ★ スマホでも「最上部の月選択バー」と「仕分けボタンバー」だけは横1列を維持 */
 div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid="stVerticalBlock"] div.nowrap-bar)) div[data-testid="stHorizontalBlock"] {
     display: flex !important;
     flex-direction: row !important;
@@ -112,7 +112,7 @@ div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid=
     margin-top: 4px;
 }
 
-/* スマホ画面での余白と固定バーのボタン文字サイズ調整 */
+/* スマホ画面での余白と固定バー・月選択プルダウンの最適化 */
 @media (max-width: 900px) {
     .block-container {
         padding-left: 0.4rem !important;
@@ -131,6 +131,11 @@ div[data-testid="stVerticalBlock"]:has(div.nowrap-bar):not(:has(div[data-testid=
         font-size: 10.5px !important;
         line-height: 1.1 !important;
         white-space: nowrap !important;
+    }
+    div[data-baseweb="select"] > div {
+        padding-left: 6px !important;
+        padding-right: 4px !important;
+        font-size: 13px !important;
     }
 }
 </style>
@@ -185,7 +190,8 @@ def get_allowance_settings(target_month):
         base_h = int(base_row["ハヤトお小遣い"].iloc[0]) if not base_row.empty else default_h
         base_m = int(base_row["マナお小遣い"].iloc[0]) if not base_row.empty else default_m
         
-        month_row = cfg_df[cfg_df["対象月"] == target_month]
+        legacy_key = f"20{target_month}請求"
+        month_row = cfg_df[cfg_df["対象月"].isin([target_month, legacy_key])]
         cur_h = int(month_row["ハヤトお小遣い"].iloc[0]) if not month_row.empty else base_h
         cur_m = int(month_row["マナお小遣い"].iloc[0]) if not month_row.empty else base_m
         return cur_h, cur_m
@@ -213,19 +219,17 @@ def save_allowance_setting(target_key, val_h, val_m):
     except Exception as e:
         st.error(f"設定の保存に失敗しました: {e}")
 
-# --- 4. ユーティリティ関数 ---
+# --- 4. ユーティリティ関数（月表記を『26年08月』に短縮） ---
 def calc_billing_month(date_str):
     try:
         dt = pd.to_datetime(str(date_str), errors='coerce')
         if pd.isna(dt):
             return "日付不明"
         if dt.day > 5:
-            if dt.month == 12:
-                return f"{dt.year + 1}年01月請求"
-            else:
-                return f"{dt.year}年{dt.month + 1:02d}月請求"
+            y, m = (dt.year + 1, 1) if dt.month == 12 else (dt.year, dt.month + 1)
         else:
-            return f"{dt.year}年{dt.month:02d}月請求"
+            y, m = dt.year, dt.month
+        return f"{y % 100:02d}年{m:02d}月"
     except Exception:
         return "日付不明"
 
@@ -342,7 +346,6 @@ def clean_and_format_csv(file_obj):
     return new_df[keep_columns]
 
 def auto_sync_from_drive():
-    """『🔄再読込』を押した時だけGoogleドライブのCSVをスキャンして未登録明細を追加する"""
     try:
         authed_session = AuthorizedSession(client.http_client.auth)
         query = "(mimeType = 'text/csv' or name contains '.csv') and trashed = false"
@@ -465,12 +468,12 @@ df["会員"] = df["カード会員様名"].apply(format_short_member)
 billing_months = sorted([m for m in df["請求月"].unique() if m != "日付不明"], reverse=True)
 if "日付不明" in df["請求月"].unique():
     billing_months.append("日付不明")
-billing_options = billing_months + ["すべて表示"]
+billing_options = billing_months + ["すべて"]
 
-# --- 上部：請求月選択 ＆ 未分類スイッチ ＆ 原文表示スイッチ ＆ 再読込（ドライブ自動同期） ---
+# --- 上部：請求月選択（『26年08月』表記でスマホでも月までクッキリ表示） ---
 with st.container():
     st.markdown('<div class="nowrap-bar"></div>', unsafe_allow_html=True)
-    c_top1, c_top2, c_top3, c_top4 = st.columns([3.8, 2.2, 2.0, 2.0])
+    c_top1, c_top2, c_top3, c_top4 = st.columns([4.0, 2.1, 1.9, 2.0])
     with c_top1:
         selected_month = st.selectbox("📅 請求月", options=billing_options, index=0, label_visibility="collapsed")
     with c_top2:
@@ -492,7 +495,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["⚡ 仕分け", "💴 現金立替", "🏦 �
 
 # ================= タブ1：一覧チェックボックス ＆ 上部1列固定バー =================
 with tab1:
-    if selected_month != "すべて表示":
+    if selected_month != "すべて":
         month_df = df[df["請求月"] == selected_month].copy()
     else:
         month_df = df.copy()
@@ -516,7 +519,6 @@ with tab1:
             st.session_state.pending_changes[i] = cat_name
         st.session_state.table_key += 1
 
-    # ★ 画面上部に固定される超スリム1段ボタンバー
     with st.container():
         st.markdown('<div class="fixed-action-bar nowrap-bar"></div>', unsafe_allow_html=True)
         pending_count = len(st.session_state.pending_changes)
@@ -556,7 +558,6 @@ with tab1:
                 st.toast("✅ クラウドに保存しました！")
                 st.rerun()
 
-    # --- 一覧表（PCでは画面幅いっぱいに全文表示、iPhoneでも日付・金額・店名の頭が収まる構成） ---
     if view_df.empty:
         st.success(f"🎉 {selected_month} の対象明細はすべて仕分け完了しています！")
     else:
@@ -607,7 +608,7 @@ with tab1:
             key=f"interactive_table_{st.session_state.table_key}"
         )
 
-# ================= タブ2：現金立替の入力（スマホでも見やすいシンプル構成） =================
+# ================= タブ2：現金立替の入力 =================
 with tab2:
     st.subheader("💴 現金の立て替えを記録")
 
@@ -663,10 +664,10 @@ with tab2:
         show_cash = cash_history_df[["請求月", "利用日", "金額", "お店・内容", "会員", "仕分け"]].sort_index(ascending=False)
         st.dataframe(show_cash.style.format({"金額": "¥{:,}"}), hide_index=True, use_container_width=True)
 
-# ================= タブ3：月別精算（総額照合バー ＋ シンプル振込カード） =================
+# ================= タブ3：月別精算 =================
 with tab3:
-    target_m = selected_month if selected_month != "すべて表示" else (billing_months[0] if billing_months else "2026年09月請求")
-    st.subheader(f"🏦 {target_m} の精算")
+    target_m = selected_month if selected_month != "すべて" else (billing_months[0] if billing_months else "26年09月")
+    st.subheader(f"🏦 {target_m}請求分 の精算")
 
     month_df = df[df["請求月"] == target_m].copy()
     calc_df = month_df[month_df["仕分け"] != "集計外"].copy()
@@ -677,7 +678,6 @@ with tab3:
     amex_df = calc_df[~is_cash]
     cash_df = calc_df[is_cash]
 
-    # ★ クレジット利用総額 ＆ 現金立替総額（請求書との一致確認用）
     amex_total_all = int(amex_df["金額"].sum())
     cash_total_all = int(cash_df["金額"].sum())
 
@@ -705,7 +705,6 @@ with tab3:
     else:
         st.success("✨ 今月の仕分けはすべて完了しています！")
 
-    # 1. 最上部：クレジット総額 ＆ 現金総額の照合ボックス
     t_col1, t_col2 = st.columns(2)
     with t_col1:
         st.markdown(
@@ -724,7 +723,6 @@ with tab3:
             unsafe_allow_html=True
         )
 
-    # 2. 真ん中：最終振込額カード（シンプル1行内訳）
     col_res1, col_res2 = st.columns(2)
     with col_res1:
         action_h = "共用口座 ➡️ ハヤト口座へ振込" if transfer_to_hayato >= 0 else "⚠️ ハヤト口座 ➡️ 共用口座へ入金"
@@ -751,7 +749,6 @@ with tab3:
             unsafe_allow_html=True
         )
 
-    # 3. 下部：項目別内訳とお小遣い設定（すっきり整理）
     with st.expander("📊 詳しい内訳（共有・個人・保留）を見る", expanded=True):
         m1, m2 = st.columns(2)
         m1.metric("👫 共有 合計", f"¥ {amex_shared + cash_burden_shared:,}", f"クレカ ¥{amex_shared:,} / 現金 ¥{cash_burden_shared:,}")
@@ -774,18 +771,20 @@ with tab3:
             st.success("✅ 保存しました！")
             st.rerun()
 
-# ================= タブ4：月次推移 ＆ 年度別一覧表（年間合計つき） =================
+# ================= タブ4：月次推移 ＆ 年（年度）別の年間合計一覧表 =================
 with tab4:
-    st.subheader("📈 月ごとの金額推移")
-    
     trend_df = df[(df["仕分け"] != "集計外") & (df["請求月"] != "日付不明")].copy()
     if not trend_df.empty:
-        trend_df["対象年"] = trend_df["請求月"].str.extract(r'^(\d{4}年)')[0].fillna("その他")
+        # "26年08月" から "2026年" を自動抽出（2027年以降のデータが増えれば自動で選択肢に追加される）
+        trend_df["対象年"] = trend_df["請求月"].str.extract(r'^(\d{2})年')[0].apply(
+            lambda x: f"20{x}年" if pd.notna(x) else "その他"
+        )
         available_years = sorted(trend_df["対象年"].unique().tolist(), reverse=True)
-        year_options = available_years + ["すべての年"]
+        year_options = available_years + ["全期間すべて"]
 
-        selected_year = st.selectbox("📅 表示する年を選択", options=year_options, index=0)
-        filtered_trend_df = trend_df[trend_df["対象年"] == selected_year].copy() if selected_year != "すべての年" else trend_df.copy()
+        st.subheader("📈 月ごとの金額推移")
+        selected_year = st.selectbox("📅 集計・表示する年（年度）を選択", options=year_options, index=0)
+        filtered_trend_df = trend_df[trend_df["対象年"] == selected_year].copy() if selected_year != "全期間すべて" else trend_df.copy()
 
         monthly_summary = filtered_trend_df.groupby(["請求月", "仕分け"])["金額"].sum().reset_index()
         monthly_summary = monthly_summary.sort_values("請求月", ascending=True)
@@ -805,12 +804,14 @@ with tab4:
             barmode="group",
             color_discrete_map=color_map
         )
-        fig_bar.update_layout(xaxis_title="", yaxis_title="金額 (円)", margin=dict(t=10, b=10, l=0, r=0), height=320, legend_title_text="")
+        fig_bar.update_layout(xaxis_title="", yaxis_title="金額 (円)", margin=dict(t=10, b=10, l=0, r=0), height=300, legend_title_text="")
         st.plotly_chart(fig_bar, use_container_width=True)
         
-        st.markdown(f"##### 📋 {selected_year} の月別・項目別一覧表")
+        st.markdown("---")
+        st.subheader(f"📋 {selected_year} の年間合計・月別一覧表")
+        st.caption("※今後2027年、2028年…とデータが増えると、上の「📅 集計・表示する年を選択」からいつでも年ごとに切り替えて年間合計を確認できます。")
+
         pivot_df = monthly_summary.pivot(index="請求月", columns="仕分け", values="金額").fillna(0).astype(int)
-        
         ordered_cats = [c for c in ["共有", "ハヤト", "マナ", "不明(保留)", "未分類"] if c in pivot_df.columns]
         pivot_df = pivot_df[ordered_cats]
         pivot_df["月間合計"] = pivot_df.sum(axis=1)
